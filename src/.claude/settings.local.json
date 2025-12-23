@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(tree:*)",
+      "Bash(source install/setup.bash:*)",
+      "Bash(ros2 pkg executables:*)",
+      "Bash(timeout 5 ros2 launch:*)",
+      "Bash(colcon build:*)",
+      "Bash(ln:*)",
+      "Bash(ros2 pkg list:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}

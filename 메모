@@ -1,0 +1,228 @@
+스마트 해상 문류
+
+
+2024년 AI프로그래밍(무인이동체제어) 민간기능경기 (지방대회) 안내
+
+[출처] 2024년 AI프로그래밍(무인이동체제어) 민간기능경기 (지방대회) 안내|작성자 pm_committee
+
+
+-뭐하는건지 쓰고
+-기간 쓰고
+- 제출 서류
+
+
+[가정] 
+- 드론에는 고정된 카메라가 있다 (/home/kiki/joljak/src/uwb_reconn/src/uwb_sim/models/typhoon_h480
+의 typhoon_h480 모델 참고해도 됨)
+- 드론은 자신의 global pos를 안다 (RTK-GPS 가정, 기본적인 드론 스펙은 home/kiki/joljak/src/uwb_reconn/src/drone_manager/drone_manager의 drone_manager.py 참고)
+- 생성되는 드론은 한대 
+- 드론의 카메라가 인식할 수 있는 범위에 빨간색 풍선이 있음
+- 드론은 카메라에 찍힌 객체의 위치를 추정할 수 있음 (/home/kiki/Downloads/Image2Pos/Image2Pos 의 box2image가 들어간 코드들 참고, box2image_ref_image_backup.py의 위치추정 참고) 
+- 검출은 YOLO를 사용, 빨간색 풍선을 검출해내야함 
+- 드론 시스템을 이루즌 기초적인 코드들은 /home/kiki/joljak/src 에 있음 (px4_msgs 사용해야하고, drone_manager 기반)
+- uwb 사용 안함
+- 현재 시뮬레이션(gazebo classic) 기반, ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py 로 실행하면 gazebo가 실행되며 임무 시작
+
+[시나리오]
+1. 드론이 이륙하고 직진으로 비행
+2. 타겟 (빨간색 풍선) 이  잡히면 그 빨간색 풍선의 위치 추정을 함 (자기 기준으로 얼만큼 앞에 있는지) = Tracking
+3. 그 빨간색 풍선으로 드론이 돌진
+4. 드론이랑 빨간색 풍선이랑 접촉하면, 빨간색 풍선이 터짐 (터진 model이 없으면 그냥 사라져도 됨) 
+
+	
+	
+	이 코드는 다음과 같은 가정과 시나리오를 기반으로 하는 워크스페이스야 :
+
+[가정] 
+
+- 드론에는 고정된 카메라가 있다 (/home/kiki/joljak/src/uwb_reconn/src/uwb_sim/models/typhoon_h480
+
+의 typhoon_h480 모델 참고해도 됨)
+
+- 드론은 자신의 global pos를 안다 (RTK-GPS 가정, 기본적인 드론 스펙은 home/kiki/joljak/src/uwb_reconn/src/drone_manager/drone_manager의 drone_manager.py 참고)
+
+- 생성되는 드론은 한대 
+
+- 드론의 카메라가 인식할 수 있는 범위에 빨간색 풍선이 있음
+
+- 드론은 카메라에 찍힌 객체의 위치를 추정할 수 있음 (/home/kiki/Downloads/Image2Pos/Image2Pos 의 box2image가 들어간 코드들 참고, box2image_ref_image_backup.py의 위치추정 참고) 
+
+- 검출은 YOLO를 사용, 빨간색 풍선을 검출해내야함 
+
+- 드론 시스템을 이루즌 기초적인 코드들은 /home/kiki/joljak/src 에 있음 (px4_msgs 사용해야하고, drone_manager 기반)
+
+- uwb 사용 안함
+
+- 현재 시뮬레이션(gazebo classic) 기반, ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py 로 실행하면 gazebo가 실행되며 임무 시작
+
+
+
+[시나리오]
+
+1. 드론이 이륙하고 직진으로 비행
+
+2. 타겟 (빨간색 풍선) 이  잡히면 그 빨간색 풍선의 위치 추정을 함 (자기 기준으로 얼만큼 앞에 있는지) = Tracking
+
+3. 그 빨간색 풍선으로 드론이 돌진
+
+4. 드론이랑 빨간색 풍선이랑 접촉하면, 빨간색 풍선이 터짐 (터진 model이 없으면 그냥 사라져도 됨) 
+
+
+
+
+
+[env-6] INFO  [commander] Ready for takeoff!
+
+[drone_manager-9] [INFO] [1766479210.005756290] [balloon_hunter_drone_manager]: Attempting to ARM...
+
+[env-6] INFO  [commander] Armed by external command	
+
+[env-6] INFO  [tone_alarm] arming warning
+
+[drone_manager-9] [INFO] [1766479211.006801500] [balloon_hunter_drone_manager]: Requesting OFFBOARD mode...
+
+[env-6] INFO  [commander] Takeoff detected	
+
+[drone_manager-9] [INFO] [1766479211.925100682] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.TAKEOFF, pos=(-0.04,0.02,0.34), armed=2, nav=14
+
+[position_estimator-8] [INFO] [1766479214.047233256] [position_estimator]: [DEBUG] Position from Monitoring: (0.05, -0.03, -0.99), yaw=0.003rad
+
+[drone_manager-9] [INFO] [1766479214.048000634] [balloon_hunter_drone_manager]: [DEBUG] Monitoring callback: pos=(0.05, -0.03, -0.99)
+
+[balloon_detector-7] [INFO] [1766479214.164562204] [balloon_detector]: [DEBUG] Balloon detector: Camera callback triggered
+
+[drone_manager-9] [INFO] [1766479214.965441174] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.TAKEOFF, pos=(0.12,-0.09,-3.66), armed=2, nav=14
+
+[drone_manager-9] [INFO] [1766479216.245371023] [balloon_hunter_drone_manager]: Takeoff Success! Starting forward flight.
+
+[drone_manager-9] [INFO] [1766479216.285464579] [balloon_hunter_drone_manager]: [DEBUG] FORWARD state: pos=(0.20, -0.17, -5.75), traveled=0.00m
+
+[drone_manager-9] [INFO] [1766479218.005004599] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.FORWARD, pos=(3.36,-0.10,-6.24), armed=2, nav=14
+
+[drone_manager-9] [INFO] [1766479218.285707729] [balloon_hunter_drone_manager]: [DEBUG] FORWARD state: pos=(4.15, -0.07, -6.18), traveled=3.95m
+
+[balloon_detector-7] [INFO] [1766479218.651524567] [balloon_detector]: [DEBUG] Publishing detection: 1 target(s), bbox=(304,7,334,43), topic=/Yolov8_Inference_1
+
+[position_estimator-8] [INFO] [1766479218.651670950] [position_estimator]: [DEBUG] Position estimator: Detection callback triggered, detections=1
+
+[position_estimator-8] [INFO] [1766479218.652014638] [position_estimator]: [DEBUG] Bbox: u=319.0, v=43.0, drone_pos=(5.06,-0.04,-6.09), yaw_rad=0.000
+
+[position_estimator-8] [INFO] [1766479218.652435778] [position_estimator]: [DEBUG] Ray: r_ned_norm=(0.923,-0.351,0.157), C_z=-6.09, r_z=0.157
+
+[position_estimator-8] [INFO] [1766479218.652754256] [position_estimator]: [DEBUG] t=4.09/0.157=26.08
+
+[position_estimator-8] [INFO] [1766479218.653265238] [position_estimator]: [DEBUG] Publishing target position: NED=(29.14, -9.20, -2.00m), Dist=25.76m, topic=/balloon_target_position
+
+[drone_manager-9] [INFO] [1766479218.653488414] [balloon_hunter_drone_manager]: [DEBUG] Drone manager: Target callback triggered, pos=(29.14, -9.20, -2.00), current_state=MissionState.FORWARD
+
+[drone_manager-9] [INFO] [1766479218.653777830] [balloon_hunter_drone_manager]: Balloon detected! TRACKING start.
+
+[drone_manager-9] [INFO] [1766479218.685987288] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(5.15, -0.04), target=[29.13646589 -9.19958067 -2.        ]
+
+[position_estimator-8] [INFO] [1766479219.047803421] [position_estimator]: [DEBUG] Position from Monitoring: (5.81, -0.06, -6.01), yaw=-0.169rad
+
+[drone_manager-9] [INFO] [1766479219.051472678] [balloon_hunter_drone_manager]: [DEBUG] Monitoring callback: pos=(5.82, -0.06, -6.00)
+
+[balloon_detector-7] [INFO] [1766479219.260500169] [balloon_detector]: [DEBUG] Balloon detector: Camera callback triggered
+
+[drone_manager-9] [INFO] [1766479219.725621872] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(6.67, -0.35), target=[ 23.3742033  -11.39900184  -2.        ]
+
+[balloon_detector-7] [INFO] [1766479219.794824851] [balloon_detector]: [DEBUG] Publishing detection: 1 target(s), bbox=(420,43,468,91), topic=/Yolov8_Inference_1
+
+[position_estimator-8] [INFO] [1766479220.013368388] [position_estimator]: [DEBUG] Publishing target position: NED=(20.24, -15.03, -2.00m), Dist=19.65m, topic=/balloon_target_position
+
+[drone_manager-9] [INFO] [1766479220.013779078] [balloon_hunter_drone_manager]: [DEBUG] Drone manager: Target callback triggered, pos=(20.24, -15.03, -2.00), current_state=MissionState.TRACKING
+
+[drone_manager-9] [INFO] [1766479220.726248752] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(7.62, -1.12), target=[ 17.4064274  -10.31314215  -2.        ]
+
+[drone_manager-9] [INFO] [1766479221.005742920] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.TRACKING, pos=(7.88,-1.38,-5.82), armed=2, nav=14
+
+[position_estimator-8] [INFO] [1766479221.665807213] [position_estimator]: [DEBUG] Position estimator: Detection callback triggered, detections=1
+
+[position_estimator-8] [INFO] [1766479221.666134910] [position_estimator]: [DEBUG] Bbox: u=492.0, v=139.0, drone_pos=(8.44,-1.96,-5.78), yaw_rad=-0.773
+
+[position_estimator-8] [INFO] [1766479221.666486179] [position_estimator]: [DEBUG] Ray: r_ned_norm=(0.573,-0.769,0.283), C_z=-5.78, r_z=0.283
+
+[position_estimator-8] [INFO] [1766479221.666779176] [position_estimator]: [DEBUG] t=3.78/0.283=13.37
+
+[position_estimator-8] [INFO] [1766479221.667220616] [position_estimator]: [DEBUG] Publishing target position: NED=(16.10, -12.25, -2.00m), Dist=12.83m, topic=/balloon_target_position
+
+[drone_manager-9] [INFO] [1766479221.667392490] [balloon_hunter_drone_manager]: [DEBUG] Drone manager: Target callback triggered, pos=(16.10, -12.25, -2.00), current_state=MissionState.TRACKING
+
+[drone_manager-9] [INFO] [1766479221.766321817] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(8.53, -2.06), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479222.766919377] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(9.25, -2.91), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479223.805487568] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(10.05, -3.90), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479224.045079683] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.TRACKING, pos=(10.24,-4.12,-5.75), armed=2, nav=14
+
+[position_estimator-8] [INFO] [1766479224.048229698] [position_estimator]: [DEBUG] Position from Monitoring: (10.24, -4.12, -5.75), yaw=-0.903rad
+
+[drone_manager-9] [INFO] [1766479224.052334636] [balloon_hunter_drone_manager]: [DEBUG] Monitoring callback: pos=(10.24, -4.13, -5.75)
+
+[balloon_detector-7] [INFO] [1766479224.332210529] [balloon_detector]: [DEBUG] Balloon detector: Camera callback triggered
+
+[drone_manager-9] [INFO] [1766479224.805488896] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(10.84, -4.82), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479225.806246018] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(11.59, -5.72), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479226.845499122] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(12.35, -6.64), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479227.045107172] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.TRACKING, pos=(12.49,-6.82,-5.76), armed=2, nav=14
+
+[drone_manager-9] [INFO] [1766479227.845586559] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(13.04, -7.51), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479228.845603411] [balloon_hunter_drone_manager]: [DEBUG] TRACKING state: drone=(13.65, -8.30), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479229.142983346] [balloon_hunter_drone_manager]: [DEBUG] Monitoring callback: pos=(13.75, -8.45, -5.86)
+
+[position_estimator-8] [INFO] [1766479229.146843307] [position_estimator]: [DEBUG] Position from Monitoring: (13.75, -8.45, -5.86), yaw=-0.893rad
+
+[drone_manager-9] [INFO] [1766479229.205425971] [balloon_hunter_drone_manager]: [DEBUG] CHARGING state: drone=(13.79, -8.49), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[balloon_detector-7] [INFO] [1766479229.394385956] [balloon_detector]: [DEBUG] Balloon detector: Camera callback triggered
+
+[drone_manager-9] [INFO] [1766479230.085768541] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.CHARGING, pos=(14.20,-9.08,-4.98), armed=2, nav=14
+
+[drone_manager-9] [INFO] [1766479230.245429858] [balloon_hunter_drone_manager]: [DEBUG] CHARGING state: drone=(14.27, -9.17), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479231.247389916] [balloon_hunter_drone_manager]: [DEBUG] CHARGING state: drone=(14.72, -9.82), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479232.285581062] [balloon_hunter_drone_manager]: [DEBUG] CHARGING state: drone=(15.22, -10.47), target=[ 15.64994801 -10.78356703  -2.        ]
+
+[drone_manager-9] [INFO] [1766479232.485914515] [balloon_hunter_drone_manager]: HIT!
+
+[drone_manager-9] [INFO] [1766479233.125999022] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.DONE, pos=(15.63,-10.94,-2.14), armed=2, nav=14
+
+[drone_manager-9] [INFO] [1766479234.145740841] [balloon_hunter_drone_manager]: [DEBUG] Monitoring callback: pos=(15.68, -11.13, -2.15)
+
+[position_estimator-8] [INFO] [1766479234.149682615] [position_estimator]: [DEBUG] Position from Monitoring: (15.68, -11.13, -2.15), yaw=-0.649rad
+
+[balloon_detector-7] [INFO] [1766479234.577979484] [balloon_detector]: [DEBUG] Balloon detector: Camera callback triggered
+
+[drone_manager-9] [INFO] [1766479236.165082878] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.DONE, pos=(15.60,-11.31,-2.18), armed=2, nav=14
+
+[drone_manager-9] [INFO] [1766479239.148031904] [balloon_hunter_drone_manager]: [DEBUG] Monitoring callback: pos=(15.63, -11.52, -2.24)
+
+[position_estimator-8] [INFO] [1766479239.152010478] [position_estimator]: [DEBUG] Position from Monitoring: (15.63, -11.52, -2.24), yaw=-0.619rad
+
+[drone_manager-9] [INFO] [1766479239.165143380] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.DONE, pos=(15.63,-11.52,-2.24), armed=2, nav=14
+
+[balloon_detector-7] [INFO] [1766479239.604702108] [balloon_detector]: [DEBUG] Balloon detector: Camera callback triggered
+
+[drone_manager-9] [INFO] [1766479242.205053752] [balloon_hunter_drone_manager]: [DEBUG] Current state: MissionState.DONE, pos=(15.88,-11.59,-2.31), armed=2, nav=14
+
+
+
+지금 직진도 detect도 되는데, 위치 추정을 못해서 (실제 풍선 위치는 0, 10, 2)
+
+CHARGING state: drone=(15.22, -10.47), target=[ 15.64994801 -10.78356703  -2.        ]
+
+풍선 위치를 -15, -10, -2로 받아와
+
+드론의 스펙이나 드론에 달린 카메라 위치는 src/balloon_hunter/models/typhoon_h480/typhoon_h480.sdf.jinja  참고해주고
+
+위치 추정 로직이 어떤 노드에서 나오는지 알려주고 그게 정확한지 확인해줘
+
+좌표계 변환에 문제 없는지도 검토해줘
