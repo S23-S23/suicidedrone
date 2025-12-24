@@ -47,13 +47,6 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'system_id': LaunchConfiguration('drone_id'),
-            'width': 1280,
-            'height': 720,
-            'fx': 678.8712179620,
-            'fy': 676.5923040326,
-            'cx': 600.7451721112,
-            'cy': 363.7283523432,
-            'cam_pitch_deg': -35.0,
             'detection_topic': '/Yolov8_Inference_1',
             'position_topic': '/drone1/fmu/out/vehicle_local_position',
             'target_position_topic': '/balloon_target_position'

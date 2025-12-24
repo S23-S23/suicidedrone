@@ -76,6 +76,7 @@ class PositionEstimator(Node):
         # Drone state
         self.drone_pos = np.array([0.0, 0.0, 0.0])  # NED frame
         self.drone_yaw = 0.0
+        self.drone_pitch = 0.0
 
         # Camera rotation matrices
         # ROS/OpenCV Camera frame: X=right, Y=down, Z=forward
@@ -127,15 +128,16 @@ class PositionEstimator(Node):
             10
         )
 
-        self.get_logger().info('Position Estimator initialized')
+        self.get_logger().info('Position Estimator with Pitch-compensated initialized')
         self.get_logger().info(f'Camera: fx={self.fx:.2f}, fy={self.fy:.2f}, pitch={self.get_parameter("cam_pitch_deg").value}°')
         self.get_logger().info(f'Subscribing to: {self.detection_topic}')
 
     def monitoring_callback(self, msg: Monitoring):
         """Update drone position from PX4 Monitoring"""
         self.drone_pos = np.array([msg.pos_x, msg.pos_y, msg.pos_z])
-        self.drone_yaw = msg.head  # Already in radians despite msg definition saying degrees
-        self.get_logger().info(f'[DEBUG] Position from Monitoring: ({msg.pos_x:.2f}, {msg.pos_y:.2f}, {msg.pos_z:.2f}), yaw={msg.head:.3f}rad', throttle_duration_sec=5.0)
+        self.drone_yaw = msg.head  # radians
+        self.drone_pitch = msg.pitch 
+        self.get_logger().info(f'[DEBUG] Pos: ({msg.pos_x:.2f}, {msg.pos_y:.2f}, {msg.pos_z:.2f}), Y={msg.head:.3f}, P={msg.pitch:.3f}', throttle_duration_sec=5.0)
 
     def detection_callback(self, msg: Yolov8Inference):
         """Process detections and estimate 3D position"""
@@ -159,13 +161,13 @@ class PositionEstimator(Node):
         y = (v - self.cy) / self.fy
 
         # Ray in camera frame (ROS/OpenCV convention: X=right, Y=down, Z=forward)
-        r_cam = np.array([x, y, 1.0])
+        r_cam = np.array([(u - self.cx) / self.fx, (v - self.cy) / self.fy, 1.0])
 
         # Transform to body frame
         r_body = self.R_b_cam_fixed @ r_cam
 
         # Transform to NED frame (only yaw, ignore roll/pitch)
-        R_n_b = rot_z(self.drone_yaw)
+        R_n_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch)
         r_ned = R_n_b @ r_body
 
         # Normalize ray
