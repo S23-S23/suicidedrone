@@ -18,11 +18,19 @@ setup(
         (os.path.join('share', package_name, 'models', 'red_balloon'),
             glob('models/red_balloon/model.*')),
         # 드론 모델 (typhoon_h480) 추가
-        (os.path.join('share', package_name, 'models', 'typhoon_h480'), 
+        (os.path.join('share', package_name, 'models', 'typhoon_h480'),
             glob('models/typhoon_h480/*.sdf*') + glob('models/typhoon_h480/*.config')),
         # 드론 모델 메쉬 파일 (meshes) 추가
-        (os.path.join('share', package_name, 'models', 'typhoon_h480', 'meshes'), 
+        (os.path.join('share', package_name, 'models', 'typhoon_h480', 'meshes'),
             glob('models/typhoon_h480/meshes/*.stl')),
+        # iris 모델 추가
+        (os.path.join('share', package_name, 'models', 'iris'),
+            glob('models/iris/*.sdf*') + glob('models/iris/*.config')),
+        (os.path.join('share', package_name, 'models', 'iris', 'meshes'),
+            glob('models/iris/meshes/*')),
+        # iris_stereo_camera 모델 추가
+        (os.path.join('share', package_name, 'models', 'iris_stereo_camera'),
+            glob('models/iris_stereo_camera/*.sdf*') + glob('models/iris_stereo_camera/*.config')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml') if os.path.exists('config') else []),
     ],
     install_requires=['setuptools'],
