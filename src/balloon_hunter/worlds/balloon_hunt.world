@@ -58,10 +58,42 @@
       </link>
     </model>
 
+    <!-- Target Balloon -->
     <include>
       <uri>model://red_balloon</uri>
       <pose>3 10 2 0 0 0</pose>
       <name>target_balloon</name>
+    </include>
+
+    <!-- Additional Balloons -->
+    <include>
+      <uri>model://red_balloon</uri>
+      <pose>5 16 1.5 0 0 0</pose>
+      <name>balloon_1</name>
+    </include>
+
+    <include>
+      <uri>model://red_balloon</uri>
+      <pose>-4 8 0.3 0 0 0</pose>
+      <name>balloon_2</name>
+    </include>
+
+    <include>
+      <uri>model://red_balloon</uri>
+      <pose>7 12 0.6 0 0 0</pose>
+      <name>balloon_3</name>
+    </include>
+
+    <include>
+      <uri>model://red_balloon</uri>
+      <pose>-6 10 2.4 0 0 0</pose>
+      <name>balloon_4</name>
+    </include>
+
+    <include>
+      <uri>model://red_balloon</uri>
+      <pose>10 10 1.2 0 0 0</pose>
+      <name>balloon_5</name>
     </include>
 
   </world>
