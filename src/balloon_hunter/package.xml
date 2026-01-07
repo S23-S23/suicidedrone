@@ -7,8 +7,7 @@
   <maintainer email="team@balloonhunter.com">Balloon Hunter Team</maintainer>
   <license>Apache License 2.0</license>
 
-  <buildtool_depend>ament_cmake</buildtool_depend>
-  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>ament_python</buildtool_depend>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

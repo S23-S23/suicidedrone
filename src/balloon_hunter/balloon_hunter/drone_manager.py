@@ -28,7 +28,7 @@ class BalloonHunterDroneManager(Node):
 
         # Parameters
         self.declare_parameter('system_id', 1)
-        self.declare_parameter('takeoff_height', 6.0)
+        self.declare_parameter('takeoff_height', 2.0)
         self.declare_parameter('forward_speed', 15.0)
         self.declare_parameter('tracking_speed', 20.0)
         self.declare_parameter('charge_speed', 20.0)
@@ -175,16 +175,20 @@ class BalloonHunterDroneManager(Node):
         # Check if forward distance limit reached
         distance_traveled = np.linalg.norm(self.drone_pos[:2] - self.forward_start_pos[:2])
 
-        self.get_logger().info(f'[DEBUG] FORWARD state: pos=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}, {self.drone_pos[2]:.2f}), traveled={distance_traveled:.2f}m', throttle_duration_sec=2.0)
+        self.get_logger().info(f'[DEBUG] FORWARD state: pos=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}, {self.drone_pos[2]:.2f}), traveled={distance_traveled:.2f}m, waiting for GCS target...', throttle_duration_sec=2.0)
 
         if distance_traveled >= self.forward_distance_limit:
-            self.get_logger().info(f'Forward distance limit reached ({distance_traveled:.2f}m). Hovering in place.', throttle_duration_sec=2.0)
-            # Hover in current position
+            self.get_logger().info(f'Forward distance limit reached ({distance_traveled:.2f}m). Hovering and waiting for GCS target selection...', throttle_duration_sec=5.0)
+            # Hover in current position, waiting for GCS ROI selection
             self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], -self.takeoff_height])
             return
 
-        # Continue forward flight - fixed target position: x=0, y=+10, z=maintain altitude
-        self.publish_trajectory_setpoint([5.0, 0.0, -self.takeoff_height])
+        # Continue slow forward flight with controlled speed (not fixed position)
+        # Calculate next position using forward_speed
+        forward_direction = np.array([1.0, 0.0, 0.0])  # X-axis forward
+        next_pos = self.drone_pos + forward_direction * self.forward_speed * 0.04  # 0.04 = 25Hz timer period
+
+        self.publish_trajectory_setpoint([next_pos[0], next_pos[1], -self.takeoff_height])
 
     def handle_tracking(self):
         self.get_logger().info(f'[DEBUG] TRACKING state: drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}), target={self.target_pos if self.target_pos is not None else "None"}', throttle_duration_sec=1.0)

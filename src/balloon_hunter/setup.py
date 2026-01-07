@@ -46,6 +46,7 @@ setup(
             'position_estimator = balloon_hunter.position_estimator:main',
             'drone_manager = balloon_hunter.drone_manager:main',
             'collision_handler = balloon_hunter.collision_handler:main',
+            'gcs_station = balloon_hunter.gcs_station:main',
         ],
     },
 )

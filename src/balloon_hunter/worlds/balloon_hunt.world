@@ -96,5 +96,11 @@
       <name>balloon_5</name>
     </include>
 
+    <include>
+      <uri>model://red_balloon</uri>
+      <pose>0 5 3 0 0 0</pose>
+      <name>balloon_6</name>
+    </include>
+
   </world>
 </sdf>

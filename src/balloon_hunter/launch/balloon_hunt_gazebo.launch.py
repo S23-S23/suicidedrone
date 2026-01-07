@@ -37,7 +37,9 @@ def launch_setup(context, *args, **kwargs):
     resource_path_env = SetEnvironmentVariable('GAZEBO_RESOURCE_PATH', '/usr/share/gazebo-11')
     model_path_env = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
-        f'{current_package_path}:{current_package_path}/models:{gazebo_classic_path}/models'
+        f'{current_package_path}/models:'
+        f'{gazebo_classic_path}/models:'
+        f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models'
     )
     plugin_path_env = SetEnvironmentVariable(
         'GAZEBO_PLUGIN_PATH',
@@ -52,6 +54,7 @@ def launch_setup(context, *args, **kwargs):
 
     # Gazebo 월드 실행
     world_file_path = os.path.join(current_package_path, 'worlds', 'balloon_hunt.world')
+    #world_file_path = os.path.join(px4_src_path, 'Tools/simulation/gazebo-classic/sitl_gazebo-classic/worlds', 'outdoor.world')
     gazebo_node = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(get_package_share_directory('gazebo_ros'), 'launch'),
@@ -96,6 +99,7 @@ def launch_setup(context, *args, **kwargs):
             '-y', '0.0',
             '-z', '0.1',
             '-Y', '1.5708'
+            #'--timeout', '20'  # 300초(5분) 동안 가제보가 준비될 때까지 대기
         ],
         output='screen',
     )
@@ -115,34 +119,55 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    # 5. 미션 노드 설정 (스테레오 토픽 반영)
-    balloon_detector = Node(
-        package='balloon_hunter',
-        executable='balloon_detector',
-        name='balloon_detector',
-        output='screen',
-        parameters=[{
-            'system_id': drone_id,
-            # 스테레오 카메라의 왼쪽 영상을 기본 분석용으로 사용
-            'camera_topic': '/left_camera/image_raw',
-            'model_path': model_path,
-            'conf': 0.5,
-            'target_class': 'sports ball'
-        }]
-    )
+    # 5. 미션 노드 설정 (GCS-based system - YOLO nodes disabled)
+    # balloon_detector = Node(
+    #     package='balloon_hunter',
+    #     executable='balloon_detector',
+    #     name='balloon_detector',
+    #     output='screen',
+    #     parameters=[{
+    #         'system_id': drone_id,
+    #         # 스테레오 카메라의 왼쪽 영상을 기본 분석용으로 사용
+    #         'camera_topic': '/left_camera/image_raw',
+    #         'model_path': model_path,
+    #         'conf': 0.5,
+    #         'target_class': 'sports ball'
+    #     }]
+    # )
 
-    # 나머지 노드들은 기존과 동일 (토픽 이름이 /drone{id}/... 구조라면 그대로 유지 가능)
-    position_estimator = Node(
+    # position_estimator = Node(
+    #     package='balloon_hunter',
+    #     executable='position_estimator',
+    #     name='position_estimator',
+    #     output='screen',
+    #     parameters=[{
+    #         'system_id': drone_id,
+    #         'detection_topic': f'/Yolov8_Inference_{drone_id}',
+    #         'position_topic': f'/drone{drone_id}/fmu/out/vehicle_local_position',
+    #         'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
+    #         'target_position_topic': '/balloon_target_position'
+    #     }]
+    # )
+
+    # New GCS-based system (all-in-one node)
+    gcs_station = Node(
         package='balloon_hunter',
-        executable='position_estimator',
-        name='position_estimator',
+        executable='gcs_station',
+        name='gcs_station',
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'detection_topic': f'/Yolov8_Inference_{drone_id}',
-            'position_topic': f'/drone{drone_id}/fmu/out/vehicle_local_position',
+            'left_camera_topic': '/left_camera/image_raw',
+            'right_camera_topic': '/right_camera/image_raw',
+            'target_position_topic': '/balloon_target_position',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
-            'target_position_topic': '/balloon_target_position'
+            'display_fps': 10,
+            # Stereo parameters
+            'baseline': 0.07,
+            'focal_length': 205.5,
+            'cx': 320.0,
+            'cy': 240.0,
+            'cam_pitch_deg': 57.3
         }]
     )
 
@@ -178,7 +203,9 @@ def launch_setup(context, *args, **kwargs):
         model_path_env, plugin_path_env,
         xrce_agent_process, gazebo_node, jinja_process,
         spawn_entity_node, px4_process,
-        balloon_detector, position_estimator, drone_manager, collision_handler,
+        # balloon_detector, position_estimator,  # Disabled for GCS-based system
+        gcs_station,  # New GCS-based all-in-one node
+        drone_manager, collision_handler,
     ]
 
     return nodes_to_start

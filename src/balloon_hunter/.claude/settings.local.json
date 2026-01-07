@@ -11,7 +11,10 @@
       "Bash(cat:*)",
       "Bash(timeout 5 ros2 service call:*)",
       "Bash(timeout 5 ros2 topic:*)",
-      "Bash(timeout 3 ros2 topic:*)"
+      "Bash(timeout 3 ros2 topic:*)",
+      "Bash(xargs:*)",
+      "Bash(chmod:*)",
+      "Bash(ros2 topic echo:*)"
     ]
   }
 }
