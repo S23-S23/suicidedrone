@@ -28,7 +28,10 @@ setup(
             glob('models/iris/*.sdf*') + glob('models/iris/*.config')),
         (os.path.join('share', package_name, 'models', 'iris', 'meshes'),
             glob('models/iris/meshes/*')),
-        # iris_stereo_camera 모델 추가
+        # iris_depth_camera 모델 추가
+        (os.path.join('share', package_name, 'models', 'iris_depth_camera'),
+            glob('models/iris_depth_camera/*.sdf*') + glob('models/iris_depth_camera/*.config')),
+        # iris_stereo_camera 모델 추가 (백업)
         (os.path.join('share', package_name, 'models', 'iris_stereo_camera'),
             glob('models/iris_stereo_camera/*.sdf*') + glob('models/iris_stereo_camera/*.config')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml') if os.path.exists('config') else []),

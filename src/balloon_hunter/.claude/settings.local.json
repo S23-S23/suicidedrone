@@ -14,7 +14,11 @@
       "Bash(timeout 3 ros2 topic:*)",
       "Bash(xargs:*)",
       "Bash(chmod:*)",
-      "Bash(ros2 topic echo:*)"
+      "Bash(ros2 topic echo:*)",
+      "Bash(find:*)",
+      "Bash(ros2 topic list:*)",
+      "Bash(ros2 node info:*)",
+      "Bash(ros2 topic info:*)"
     ]
   }
 }

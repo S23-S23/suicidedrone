@@ -37,9 +37,9 @@ def launch_setup(context, *args, **kwargs):
     resource_path_env = SetEnvironmentVariable('GAZEBO_RESOURCE_PATH', '/usr/share/gazebo-11')
     model_path_env = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
+        f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:'
         f'{current_package_path}/models:'
-        f'{gazebo_classic_path}/models:'
-        f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models'
+        f'{gazebo_classic_path}/models'
     )
     plugin_path_env = SetEnvironmentVariable(
         'GAZEBO_PLUGIN_PATH',
@@ -67,33 +67,16 @@ def launch_setup(context, *args, **kwargs):
         }.items()
     )
 
-    # 3. 드론 모델 생성 (Jinja 사용)
-    # iris_stereo_camera 폴더 내에 .sdf.jinja 파일이 있다고 가정합니다.
-    # 만약 없다면 iris.sdf.jinja를 복사하여 스테레오 카메라 설정을 추가한 파일을 생성해야 합니다.
-    jinja_cmd = [
-        f'{gazebo_classic_path}/scripts/jinja_gen.py',
-        f'{current_package_path}/models/iris_stereo_camera/iris_stereo_camera.sdf.jinja',
-        f'{current_package_path}',
-        '--mavlink_tcp_port', '4560',
-        '--mavlink_udp_port', '14560',
-        '--mavlink_id', str(drone_id),
-        '--gst_udp_port', '5600',
-        '--video_uri', '5600',
-        '--mavlink_cam_udp_port', '14530',
-        '--output-file', '/tmp/balloon_hunter_drone.sdf'
-    ]
+    # 3. 드론 모델 생성 (PX4의 iris_depth_camera 직접 사용)
+    # PX4의 iris_depth_camera.sdf를 사용 (모든 의존성 모델 포함)
+    drone_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_depth_camera/iris_depth_camera.sdf'
 
-    jinja_process = ExecuteProcess(
-        cmd=jinja_cmd,
-        output='screen',
-    )
-
-    # Gazebo에 드론 스폰 (기존 Typhoon 위치 유지)
+    # Gazebo에 드론 스폰 (PX4 iris_depth_camera 모델 사용)
     spawn_entity_node = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
         arguments=[
-            '-file', '/tmp/balloon_hunter_drone.sdf',
+            '-file', drone_sdf_path,
             '-entity', f'drone{drone_id}',
             '-x', '0.0',
             '-y', '0.0',
@@ -149,7 +132,7 @@ def launch_setup(context, *args, **kwargs):
     #     }]
     # )
 
-    # New GCS-based system (all-in-one node)
+    # New GCS-based system (all-in-one node) - Depth Camera Mode
     gcs_station = Node(
         package='balloon_hunter',
         executable='gcs_station',
@@ -157,17 +140,19 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'left_camera_topic': '/left_camera/image_raw',
-            'right_camera_topic': '/right_camera/image_raw',
+            'rgb_camera_topic': '/camera/image_raw',
+            'depth_camera_topic': '/camera/depth/image_raw',
             'target_position_topic': '/balloon_target_position',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
             'display_fps': 10,
-            # Stereo parameters
-            'baseline': 0.07,
-            'focal_length': 205.5,
-            'cx': 320.0,
-            'cy': 240.0,
-            'cam_pitch_deg': 57.3
+            # Depth camera parameters (RealSense D455: 848x480)
+            # Focal length calculated from FOV: f = width / (2 * tan(FOV/2))
+            # FOV = 1.5009831567 rad = 86 degrees
+            # f = 848 / (2 * tan(1.5009831567/2)) = 848 / 1.557 = 544.6
+            'focal_length': 544.6,
+            'cx': 424.0,  # Principal point x (848/2 = 424)
+            'cy': 240.0,  # Principal point y (480/2 = 240)
+            'cam_pitch_deg': 0.0
         }]
     )
 
@@ -201,10 +186,10 @@ def launch_setup(context, *args, **kwargs):
     nodes_to_start = [
         px4_lat, px4_lon, resource_path_env, px4_sim_env,
         model_path_env, plugin_path_env,
-        xrce_agent_process, gazebo_node, jinja_process,
+        xrce_agent_process, gazebo_node,
         spawn_entity_node, px4_process,
         # balloon_detector, position_estimator,  # Disabled for GCS-based system
-        gcs_station,  # New GCS-based all-in-one node
+        gcs_station,  # New GCS-based all-in-one node (Depth Camera Mode)
         drone_manager, collision_handler,
     ]
 

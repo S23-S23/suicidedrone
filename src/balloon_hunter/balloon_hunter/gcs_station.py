@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-GCS Station Node - Ground Control Station with ROI Selection and Stereo Depth Estimation
-Displays stereo camera feed, allows operator to select target ROI, computes depth, and publishes 3D position
+GCS Station Node - Ground Control Station with ROI Selection and Depth Camera
+Displays depth camera feed, allows operator to select target ROI, uses depth data, and publishes 3D position
 """
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image, RegionOfInterest
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
@@ -16,34 +17,32 @@ from px4_msgs.msg import Monitoring
 
 
 class GCSStation(Node):
-    """Ground Control Station for manual target selection with stereo depth estimation"""
+    """Ground Control Station for manual target selection with depth camera"""
 
     def __init__(self):
         super().__init__('gcs_station')
 
         # Parameters
         self.declare_parameter('system_id', 1)
-        self.declare_parameter('left_camera_topic', '/left_camera/image_raw')
-        self.declare_parameter('right_camera_topic', '/right_camera/image_raw')
+        self.declare_parameter('rgb_camera_topic', '/camera/image_raw')
+        self.declare_parameter('depth_camera_topic', '/camera/depth/image_raw')
         self.declare_parameter('target_position_topic', '/balloon_target_position')
         self.declare_parameter('monitoring_topic', '/drone1/fmu/out/monitoring')
         self.declare_parameter('display_fps', 10)
 
-        # Stereo parameters
-        self.declare_parameter('baseline', 0.07)
-        self.declare_parameter('focal_length', 205.5)
-        self.declare_parameter('cx', 320.0)
+        # Depth camera parameters
+        self.declare_parameter('focal_length', 424.0)
+        self.declare_parameter('cx', 424.0)
         self.declare_parameter('cy', 240.0)
-        self.declare_parameter('cam_pitch_deg', 57.3)
+        self.declare_parameter('cam_pitch_deg', 0.0)
 
         self.system_id = self.get_parameter('system_id').value
-        left_topic = self.get_parameter('left_camera_topic').value
-        right_topic = self.get_parameter('right_camera_topic').value
+        rgb_topic = self.get_parameter('rgb_camera_topic').value
+        depth_topic = self.get_parameter('depth_camera_topic').value
         target_topic = self.get_parameter('target_position_topic').value
         monitoring_topic = self.get_parameter('monitoring_topic').value
         display_fps = self.get_parameter('display_fps').value
 
-        self.baseline = self.get_parameter('baseline').value
         self.fx = self.get_parameter('focal_length').value
         self.fy = self.fx
         self.cx = self.get_parameter('cx').value
@@ -54,8 +53,8 @@ class GCSStation(Node):
         self.bridge = CvBridge()
 
         # Camera image storage
-        self.left_image = None
-        self.right_image = None
+        self.rgb_image = None
+        self.depth_image = None
         self.display_image = None
 
         # ROI selection state
@@ -70,22 +69,27 @@ class GCSStation(Node):
         self.drone_yaw = None
         self.drone_pitch = None
 
-        # Stereo matcher
-        self.stereo_matcher = cv2.StereoBM_create(numDisparities=64, blockSize=15)
-
         # Tracking state
         self.tracker = None
         self.is_tracking = False
 
         # Subscribers
-        self.left_sub = self.create_subscription(
-            Image, left_topic, self.left_image_callback, 10
+        self.rgb_sub = self.create_subscription(
+            Image, rgb_topic, self.rgb_image_callback, 10
         )
-        self.right_sub = self.create_subscription(
-            Image, right_topic, self.right_image_callback, 10
+        self.depth_sub = self.create_subscription(
+            Image, depth_topic, self.depth_image_callback, 10
+        )
+
+        # QoS profile for PX4 topics (BEST_EFFORT to match PX4 publisher)
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
         )
         self.monitoring_sub = self.create_subscription(
-            Monitoring, monitoring_topic, self.monitoring_callback, 10
+            Monitoring, monitoring_topic, self.monitoring_callback, qos_profile
         )
 
         # Publisher for target position
@@ -98,25 +102,32 @@ class GCSStation(Node):
         # OpenCV window setup
         self.window_name = f'GCS Station - Drone {self.system_id}'
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, 1280, 480)
+        cv2.resizeWindow(self.window_name, 848, 480)
         cv2.setMouseCallback(self.window_name, self.mouse_callback)
 
-        self.get_logger().info(f'GCS Station initialized for Drone {self.system_id}')
+        self.get_logger().info(f'GCS Station initialized for Drone {self.system_id} (Depth Camera Mode)')
         self.get_logger().info('Instructions: Drag mouse to select ROI, press "r" to reset, "q" to quit')
 
-    def left_image_callback(self, msg):
-        """Receive left camera image"""
+    def rgb_image_callback(self, msg):
+        """Receive RGB camera image"""
         try:
-            self.left_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            self.rgb_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
-            self.get_logger().error(f'Failed to convert left image: {e}')
+            self.get_logger().error(f'Failed to convert RGB image: {e}')
 
-    def right_image_callback(self, msg):
-        """Receive right camera image"""
+    def depth_image_callback(self, msg):
+        """Receive depth camera image"""
         try:
-            self.right_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # Depth images are typically 32FC1 (float32) or 16UC1 (uint16)
+            # Both RGB and Depth are 848x480 from RealSense D455
+            self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
+            self.get_logger().info(
+                f'Depth image received: {self.depth_image.shape}, '
+                f'range=[{self.depth_image.min():.2f}, {self.depth_image.max():.2f}]',
+                throttle_duration_sec=5.0
+            )
         except Exception as e:
-            self.get_logger().error(f'Failed to convert right image: {e}')
+            self.get_logger().error(f'Failed to convert depth image: {e}')
 
     def monitoring_callback(self, msg):
         """Receive drone position and orientation"""
@@ -167,7 +178,7 @@ class GCSStation(Node):
 
     def initialize_tracker(self):
         """Initialize tracker with selected ROI"""
-        if self.current_roi and self.left_image is not None:
+        if self.current_roi and self.rgb_image is not None:
             # For Gazebo simulation with static targets, tracking is optional
             # Try to initialize CSRT tracker, but don't fail if it doesn't work
             try:
@@ -183,7 +194,7 @@ class GCSStation(Node):
                     self.tracker = None
                     return
 
-                success = self.tracker.init(self.left_image, self.current_roi)
+                success = self.tracker.init(self.rgb_image, self.current_roi)
                 if success:
                     self.is_tracking = True
                     self.get_logger().info('Tracker initialized successfully')
@@ -197,13 +208,21 @@ class GCSStation(Node):
                 self.tracker = None
 
     def process_callback(self):
-        """Main processing: track ROI, compute depth, publish position"""
-        if not self.roi_selected or self.left_image is None or self.right_image is None:
+        """Main processing: track ROI, get depth from depth image, publish position"""
+        if not self.roi_selected:
+            return
+
+        if self.rgb_image is None:
+            self.get_logger().warn('RGB image not available', throttle_duration_sec=5.0)
+            return
+
+        if self.depth_image is None:
+            self.get_logger().warn('Depth image not available', throttle_duration_sec=5.0)
             return
 
         # Update tracker (if successful, update ROI; if failed, keep using last ROI)
         if self.is_tracking and self.tracker:
-            success, bbox = self.tracker.update(self.left_image)
+            success, bbox = self.tracker.update(self.rgb_image)
             if success:
                 self.current_roi = tuple(map(int, bbox))
                 self.get_logger().info('Tracking update successful', throttle_duration_sec=2.0)
@@ -212,18 +231,19 @@ class GCSStation(Node):
                 self.is_tracking = False
                 # Don't return - continue with last known ROI position
 
-        if not self.current_roi or self.drone_position is None:
+        if not self.current_roi:
+            self.get_logger().warn('No ROI selected', throttle_duration_sec=5.0)
+            return
+
+        if self.drone_position is None:
+            self.get_logger().warn('Drone position not available', throttle_duration_sec=5.0)
             return
 
         try:
-            # Compute stereo depth
-            left_gray = cv2.cvtColor(self.left_image, cv2.COLOR_BGR2GRAY)
-            right_gray = cv2.cvtColor(self.right_image, cv2.COLOR_BGR2GRAY)
-            disparity = self.stereo_matcher.compute(left_gray, right_gray)
-
-            # Get depth of ROI
-            depth = self.compute_roi_depth(disparity, self.current_roi)
-            if depth is None:
+            # Get depth of ROI from depth image
+            depth = self.compute_roi_depth(self.depth_image, self.current_roi)
+            if depth is None or depth <= 0 or np.isnan(depth) or np.isinf(depth):
+                self.get_logger().warn('Invalid depth value', throttle_duration_sec=2.0)
                 return
 
             # Convert to 3D position in NED frame
@@ -251,25 +271,40 @@ class GCSStation(Node):
         except Exception as e:
             self.get_logger().error(f'Processing error: {e}')
 
-    def compute_roi_depth(self, disparity_map, roi):
-        """Compute median depth of ROI"""
+    def compute_roi_depth(self, depth_map, roi):
+        """Compute median depth of ROI from depth image"""
         x, y, w, h = roi
-        x = max(0, min(x, disparity_map.shape[1] - 1))
-        y = max(0, min(y, disparity_map.shape[0] - 1))
-        w = min(w, disparity_map.shape[1] - x)
-        h = min(h, disparity_map.shape[0] - y)
+        x = max(0, min(x, depth_map.shape[1] - 1))
+        y = max(0, min(y, depth_map.shape[0] - 1))
+        w = min(w, depth_map.shape[1] - x)
+        h = min(h, depth_map.shape[0] - y)
 
         if w <= 0 or h <= 0:
+            self.get_logger().warn(f'Invalid ROI dimensions: w={w}, h={h}')
             return None
 
-        roi_disparity = disparity_map[y:y+h, x:x+w].astype(np.float32) / 16.0
-        valid_disparities = roi_disparity[roi_disparity > 0]
+        # Extract ROI depth values
+        roi_depth = depth_map[y:y+h, x:x+w]
 
-        if len(valid_disparities) < 10:
+        # Filter out invalid depth values (0, inf, nan)
+        valid_depths = roi_depth[(roi_depth > 0) & np.isfinite(roi_depth)]
+
+        if len(valid_depths) < 10:
+            self.get_logger().warn(
+                f'Insufficient valid depth values: {len(valid_depths)}/10 required. '
+                f'ROI: ({x},{y},{w},{h}), depth range: [{roi_depth.min():.2f}, {roi_depth.max():.2f}]',
+                throttle_duration_sec=2.0
+            )
             return None
 
-        depths = (self.baseline * self.fx) / valid_disparities
-        return np.median(depths)
+        # Return median depth
+        median_depth = np.median(valid_depths)
+        self.get_logger().info(
+            f'ROI depth - median: {median_depth:.2f}m, valid pixels: {len(valid_depths)}, '
+            f'min: {valid_depths.min():.2f}m, max: {valid_depths.max():.2f}m',
+            throttle_duration_sec=2.0
+        )
+        return median_depth
 
     def compute_ned_position(self, roi, depth):
         """Convert ROI + depth to NED world position"""
@@ -303,29 +338,18 @@ class GCSStation(Node):
         return (drone_x + X_ned_rel, drone_y + Y_ned_rel, drone_z + Z_ned_rel)
 
     def display_callback(self):
-        """Display camera feed with ROI overlay"""
-        if self.left_image is None:
+        """Display RGB camera feed with ROI overlay"""
+        if self.rgb_image is None:
             return
 
-        # Create side-by-side display with labels
-        left_display = self.left_image.copy()
+        # Display RGB image only
+        self.display_image = self.rgb_image.copy()
 
-        # Add camera labels
-        cv2.putText(left_display, 'LEFT CAMERA', (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
+        # Add camera label
+        cv2.putText(self.display_image, 'RGB Camera (848x480)', (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
-        if self.right_image is not None:
-            right_display = self.right_image.copy()
-            cv2.putText(right_display, 'RIGHT CAMERA', (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
-
-            # Stack horizontally with separator line
-            separator = np.ones((left_display.shape[0], 3, 3), dtype=np.uint8) * 255
-            self.display_image = np.hstack([left_display, separator, right_display])
-        else:
-            self.display_image = left_display
-
-        # Draw ROI on left side only
+        # Draw ROI
         if self.roi_selected and self.current_roi:
             x, y, w, h = self.current_roi
             color = (0, 255, 0) if self.is_tracking else (0, 255, 255)
