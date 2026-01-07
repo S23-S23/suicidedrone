@@ -10,7 +10,14 @@
       "Bash(colcon build:*)",
       "Bash(ln:*)",
       "Bash(ros2 pkg list:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(gz sim:*)",
+      "Bash(gz --version:*)",
+      "Bash(dpkg:*)",
+      "Bash(ign gazebo:*)",
+      "Bash(ign fuel list:*)",
+      "Bash(find:*)",
+      "Bash(make:*)"
     ]
   }
 }

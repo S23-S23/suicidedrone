@@ -1,17 +1,38 @@
 <?xml version="1.0" ?>
-<sdf version="1.6">
+<sdf version="1.9">
   <world name="balloon_hunt">
-    <physics name="default_physics" default="true" type="ode">
+    <physics name="1ms" type="ignored">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.0</real_time_factor>
-      <real_time_update_rate>1000</real_time_update_rate>
     </physics>
 
     <scene>
       <ambient>0.4 0.4 0.4 1</ambient>
       <background>0.7 0.7 0.7 1</background>
-      <shadows>true</shadows>
+      <grid>false</grid>
     </scene>
+
+    <plugin
+      filename="ignition-gazebo-physics-system"
+      name="ignition::gazebo::systems::Physics">
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-user-commands-system"
+      name="ignition::gazebo::systems::UserCommands">
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-scene-broadcaster-system"
+      name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-sensors-system"
+      name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-imu-system"
+      name="ignition::gazebo::systems::Imu">
+    </plugin>
 
     <light name="sun" type="directional">
       <cast_shadows>true</cast_shadows>
@@ -46,10 +67,6 @@
             </plane>
           </geometry>
           <material>
-            <script>
-              <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
-            </script>
             <ambient>0.8 0.8 0.8 1</ambient>
             <diffuse>0.8 0.8 0.8 1</diffuse>
             <specular>0.8 0.8 0.8 1</specular>
@@ -60,44 +77,44 @@
 
     <!-- Target Balloon -->
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>3 10 2 0 0 0</pose>
       <name>target_balloon</name>
     </include>
 
     <!-- Additional Balloons -->
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>5 16 1.5 0 0 0</pose>
       <name>balloon_1</name>
     </include>
 
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>-4 8 0.3 0 0 0</pose>
       <name>balloon_2</name>
     </include>
 
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>7 12 0.6 0 0 0</pose>
       <name>balloon_3</name>
     </include>
 
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>-6 10 2.4 0 0 0</pose>
       <name>balloon_4</name>
     </include>
 
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>10 10 1.2 0 0 0</pose>
       <name>balloon_5</name>
     </include>
 
     <include>
-      <uri>model://red_balloon</uri>
+      <uri>red_balloon</uri>
       <pose>0 5 3 0 0 0</pose>
       <name>balloon_6</name>
     </include>

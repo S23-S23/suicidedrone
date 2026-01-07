@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <model name='x500_depth_px4'>
+    <!-- Include base x500 model -->
+    <include merge='true'>
+      <uri>x500</uri>
+    </include>
+
+    <!-- Include OakD-Lite stereo camera -->
+    <include merge='true'>
+      <uri>https://fuel.gazebosim.org/1.0/RudisLaboratories/models/OakD-Lite</uri>
+      <pose>.12 .03 .242 0 0 0</pose>
+    </include>
+
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>OakD-Lite/base_link</child>
+      <pose relative_to="base_link">.12 .03 .242 0 0 0</pose>
+    </joint>
+
+    <!-- PX4 MAVLink Plugin for Ignition Gazebo -->
+    <plugin
+      filename="gz-sim-multicopter-control-system"
+      name="gz::sim::systems::MulticopterVelocityControl">
+      <robotNamespace>x500_depth_px4</robotNamespace>
+      <commandSubTopic>/cmd_vel</commandSubTopic>
+      <motorControlPubTopic>/command/motor_speed</motorControlPubTopic>
+      <enableSubTopic>/enable</enableSubTopic>
+      <comLinkName>base_link</comLinkName>
+      <velocityGain>2.7 2.7 2.7</velocityGain>
+      <attitudeGain>2 3 0.15</attitudeGain>
+      <angularRateGain>0.4 0.52 0.18</angularRateGain>
+      <maximumLinearAcceleration>2 2 2</maximumLinearAcceleration>
+      <maximumAngularVelocity>3 3 3</maximumAngularVelocity>
+      <linearVelocityNoiseMean>0 0 0</linearVelocityNoiseMean>
+      <linearVelocityNoiseStdDev>0.1108 0.1108 0.1108</linearVelocityNoiseStdDev>
+      <angularVelocityNoiseMean>0 0 0</angularVelocityNoiseMean>
+      <angularVelocityNoiseStdDev>0.04 0.04 0.04</angularVelocityNoiseStdDev>
+    </plugin>
+
+  </model>
+</sdf>

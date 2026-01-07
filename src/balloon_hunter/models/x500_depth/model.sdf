@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <model name='x500_depth'> <include merge='true'>
+      <uri>x500</uri>
+    </include>
+    <include merge='true'>
+      <uri>https://fuel.gazebosim.org/1.0/RudisLaboratories/models/OakD-Lite</uri>
+      <pose>.12 .03 .242 0 0 0</pose>
+    </include>
+
+    <plugin
+      filename="gz-sim-px4-mavlink-interface-system"
+      name="gz::sim::systems::PX4MavlinkInterface">
+      <pub_sim_time>true</pub_sim_time>
+      <packet_address>127.0.0.1</packet_address>
+      <packet_port>4560</packet_port>
+      <serial_enabled>false</serial_enabled>
+      <connection_timeout_ms>5000</connection_timeout_ms>
+    </plugin>
+  </model>
+</sdf>
