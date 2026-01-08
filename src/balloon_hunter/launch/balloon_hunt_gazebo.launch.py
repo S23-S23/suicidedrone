@@ -14,6 +14,7 @@ from launch.actions import (
     OpaqueFunction,
     IncludeLaunchDescription,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
@@ -72,19 +73,24 @@ def launch_setup(context, *args, **kwargs):
     drone_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_depth_camera/iris_depth_camera.sdf'
 
     # Gazebo에 드론 스폰 (PX4 iris_depth_camera 모델 사용)
-    spawn_entity_node = Node(
-        package='gazebo_ros',
-        executable='spawn_entity.py',
-        arguments=[
-            '-file', drone_sdf_path,
-            '-entity', f'drone{drone_id}',
-            '-x', '0.0',
-            '-y', '0.0',
-            '-z', '0.1',
-            '-Y', '1.5708'
-            #'--timeout', '20'  # 300초(5분) 동안 가제보가 준비될 때까지 대기
-        ],
-        output='screen',
+    # Gazebo가 완전히 시작될 때까지 5초 대기
+    spawn_entity_node = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='gazebo_ros',
+                executable='spawn_entity.py',
+                arguments=[
+                    '-file', drone_sdf_path,
+                    '-entity', f'drone{drone_id}',
+                    '-x', '0.0',
+                    '-y', '0.0',
+                    '-z', '0.1',
+                    '-Y', '1.5708'
+                ],
+                output='screen',
+            )
+        ]
     )
 
     # 4. PX4 SITL 실행 (Iris 모델 적용)
@@ -133,27 +139,33 @@ def launch_setup(context, *args, **kwargs):
     # )
 
     # New GCS-based system (all-in-one node) - Depth Camera Mode
-    gcs_station = Node(
-        package='balloon_hunter',
-        executable='gcs_station',
-        name='gcs_station',
-        output='screen',
-        parameters=[{
-            'system_id': drone_id,
-            'rgb_camera_topic': '/camera/image_raw',
-            'depth_camera_topic': '/camera/depth/image_raw',
-            'target_position_topic': '/balloon_target_position',
-            'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
-            'display_fps': 10,
-            # Depth camera parameters (RealSense D455: 848x480)
-            # Focal length calculated from FOV: f = width / (2 * tan(FOV/2))
-            # FOV = 1.5009831567 rad = 86 degrees
-            # f = 848 / (2 * tan(1.5009831567/2)) = 848 / 1.557 = 544.6
-            'focal_length': 544.6,
-            'cx': 424.0,  # Principal point x (848/2 = 424)
-            'cy': 240.0,  # Principal point y (480/2 = 240)
-            'cam_pitch_deg': 0.0
-        }]
+    # Wait for drone spawn (5s) + camera initialization (3s) = 8s total delay
+    gcs_station = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='balloon_hunter',
+                executable='gcs_station',
+                name='gcs_station',
+                output='screen',
+                parameters=[{
+                    'system_id': drone_id,
+                    'rgb_camera_topic': '/camera/image_raw',
+                    'depth_camera_topic': '/camera/depth/image_raw',
+                    'target_position_topic': '/balloon_target_position',
+                    'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
+                    'display_fps': 5,
+                    # Depth camera parameters (RealSense D455: 848x480)
+                    # Focal length calculated from FOV: f = width / (2 * tan(FOV/2))
+                    # FOV = 1.5009831567 rad = 86 degrees
+                    # f = 848 / (2 * tan(1.5009831567/2)) = 848 / 1.557 = 544.6
+                    'focal_length': 544.6,
+                    'cx': 424.0,  # Principal point x (848/2 = 424)
+                    'cy': 240.0,  # Principal point y (480/2 = 240)
+                    'cam_pitch_deg': 0.0
+                }]
+            )
+        ]
     )
 
     drone_manager = Node(
@@ -163,7 +175,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'takeoff_height': 6.0,
+            'takeoff_height': 2.0,
             'forward_speed': 2.0,
             'tracking_speed': 3.0,
             'charge_speed': 5.0,

@@ -18,7 +18,21 @@
       "Bash(find:*)",
       "Bash(ros2 topic list:*)",
       "Bash(ros2 node info:*)",
-      "Bash(ros2 topic info:*)"
+      "Bash(ros2 topic info:*)",
+      "Bash(python3:*)",
+      "Bash(ros2 node list:*)",
+      "Bash(gz model:*)",
+      "Bash(dpkg:*)",
+      "Bash(apt-cache search:*)",
+      "Bash(apt-cache show:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(apt-file list:*)",
+      "Bash(ros2 launch:*)",
+      "Bash(echo:*)",
+      "Bash(pkill:*)",
+      "Bash(tree:*)",
+      "Bash(export GAZEBO_MODEL_PATH:*)",
+      "Bash(gzserver:*)"
     ]
   }
 }

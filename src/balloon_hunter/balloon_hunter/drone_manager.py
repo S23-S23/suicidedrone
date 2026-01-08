@@ -29,7 +29,7 @@ class BalloonHunterDroneManager(Node):
         # Parameters
         self.declare_parameter('system_id', 1)
         self.declare_parameter('takeoff_height', 2.0)
-        self.declare_parameter('forward_speed', 15.0)
+        self.declare_parameter('forward_speed', 10.0)
         self.declare_parameter('tracking_speed', 20.0)
         self.declare_parameter('charge_speed', 20.0)
         self.declare_parameter('charge_distance', 3.0)
@@ -57,7 +57,7 @@ class BalloonHunterDroneManager(Node):
         self.monitoring_msg = Monitoring() # Monitoring 변수 초기화
         self.last_cmd_time = 0
         self.forward_start_pos = None  # Track starting position for forward flight
-        self.forward_distance_limit = 10.0  # Maximum forward distance in meters
+        self.forward_distance_limit = 20.0  # Maximum forward distance in meters
 
         # Publishers
         self.ocm_publisher = self.create_publisher(OffboardControlMode, f'{self.topic_prefix_fmu}in/offboard_control_mode', qos_profile_sensor_data)

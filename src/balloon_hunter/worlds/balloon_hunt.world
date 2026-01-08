@@ -58,13 +58,13 @@
       </link>
     </model>
 
-    <!-- Target Balloon -->
+    <!-- EuroPallet Target (rotated 90 degrees, floating in air) -->
     <include>
-      <uri>model://red_balloon</uri>
-      <pose>0 7 3 0 0 0</pose>
-      <name>target_balloon</name>
+      <uri>model://europallet</uri>
+      <pose>0 7 3 1.5708 0 0</pose>
+      <name>target_pallet</name>
+      <static>true</static>
     </include>
-
 
   </world>
 </sdf>

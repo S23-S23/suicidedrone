@@ -34,6 +34,17 @@ setup(
         # iris_stereo_camera 모델 추가 (백업)
         (os.path.join('share', package_name, 'models', 'iris_stereo_camera'),
             glob('models/iris_stereo_camera/*.sdf*') + glob('models/iris_stereo_camera/*.config')),
+        # feature_target 모델 추가
+        (os.path.join('share', package_name, 'models', 'feature_target'),
+            glob('models/feature_target/*.sdf*') + glob('models/feature_target/*.config')),
+        # europallet 모델 추가
+        (os.path.join('share', package_name, 'models', 'europallet'),
+            glob('models/europallet/model.*')),
+        (os.path.join('share', package_name, 'models', 'europallet', 'meshes'),
+            glob('models/europallet/meshes/*')),
+        (os.path.join('share', package_name, 'models', 'europallet', 'materials', 'textures'),
+            glob('models/europallet/materials/textures/*')),
+
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml') if os.path.exists('config') else []),
     ],
     install_requires=['setuptools'],
