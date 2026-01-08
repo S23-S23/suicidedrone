@@ -24,7 +24,7 @@ class GCSStation(Node):
         self.declare_parameter('depth_camera_topic', '/camera/depth/image_raw')
         self.declare_parameter('target_position_topic', '/balloon_target_position')
         self.declare_parameter('monitoring_topic', '/drone1/fmu/out/monitoring')
-        self.declare_parameter('display_fps', 15)
+        self.declare_parameter('display_fps', 5)
         self.declare_parameter('focal_length', 544.6)
         self.declare_parameter('cx', 424.0)
         self.declare_parameter('cy', 240.0)
