@@ -73,9 +73,9 @@ def launch_setup(context, *args, **kwargs):
     drone_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_depth_camera/iris_depth_camera.sdf'
 
     # Gazebo에 드론 스폰 (PX4 iris_depth_camera 모델 사용)
-    # Gazebo가 완전히 시작될 때까지 5초 대기
+    # Gazebo가 완전히 시작될 때까지 10초 대기 (europallet 모델 로딩 포함)
     spawn_entity_node = TimerAction(
-        period=5.0,
+        period=10.0,
         actions=[
             Node(
                 package='gazebo_ros',
@@ -140,8 +140,9 @@ def launch_setup(context, *args, **kwargs):
 
     # New GCS-based system (all-in-one node) - Depth Camera Mode
     # Wait for drone spawn (5s) + camera initialization (3s) = 8s total delay
+    # GCS station - 드론 spawn(10초) + 카메라 초기화(3초) = 13초 대기
     gcs_station = TimerAction(
-        period=8.0,
+        period=13.0,
         actions=[
             Node(
                 package='balloon_hunter',
@@ -176,7 +177,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'system_id': drone_id,
             'takeoff_height': 2.0,
-            'forward_speed': 2.0,
+            'forward_speed': 4.0,
             'tracking_speed': 3.0,
             'charge_speed': 5.0,
             'charge_distance': 3.0,
@@ -195,6 +196,26 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
+    # Position Logger (디버깅용 - 위치 기록 및 시각화)
+    # 15초 후에 시작 (Gazebo(0s) + Spawn(10s) + 안정화(5s))
+    position_logger = TimerAction(
+        period=13.0,
+        actions=[
+            Node(
+                package='balloon_hunter',
+                executable='position_logger',
+                name='position_logger',
+                output='screen',
+                parameters=[{
+                    'target_x': 0.0,
+                    'target_y': 7.0,
+                    'target_z': 3.0,
+                    'log_directory': '/home/kiki/visionws/logs'
+                }]
+            )
+        ]
+    )
+
     nodes_to_start = [
         px4_lat, px4_lon, resource_path_env, px4_sim_env,
         model_path_env, plugin_path_env,
@@ -203,6 +224,7 @@ def launch_setup(context, *args, **kwargs):
         # balloon_detector, position_estimator,  # Disabled for GCS-based system
         gcs_station,  # New GCS-based all-in-one node (Depth Camera Mode)
         drone_manager, collision_handler,
+        position_logger,  # Position logging and visualization (starts after 15s)
     ]
 
     return nodes_to_start

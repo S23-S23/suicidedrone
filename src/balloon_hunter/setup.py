@@ -61,6 +61,9 @@ setup(
             'drone_manager = balloon_hunter.drone_manager:main',
             'collision_handler = balloon_hunter.collision_handler:main',
             'gcs_station = balloon_hunter.gcs_station:main',
+            'position_logger = balloon_hunter.position_logger:main',
+            'csv_logger = balloon_hunter.csv_logger:main',
+            'plot_from_csv = balloon_hunter.plot_from_csv:main',
         ],
     },
 )
