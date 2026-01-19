@@ -36,14 +36,14 @@ class BalloonDetector(Node):
         self.target_class = self.get_parameter('target_class').value
 
         # Load YOLO model
-        self.get_logger().info(f'Loading YOLO model from: {model_path}')
+        #self.get_logger().info(f'Loading YOLO model from: {model_path}')
         self.model = YOLO(model_path)
 
         # Try to use GPU if available
         if torch.cuda.is_available():
             self.device = 'cuda:0'
             self.model.to('cuda:0')
-            self.get_logger().info('Using GPU (CUDA)')
+            #self.get_logger().info('Using GPU (CUDA)')
         else:
             self.device = 'cpu'
             self.get_logger().info('Using CPU (GPU not available)')

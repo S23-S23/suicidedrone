@@ -128,9 +128,9 @@ class PositionEstimator(Node):
             10
         )
 
-        self.get_logger().info('Position Estimator with Pitch-compensated initialized')
-        self.get_logger().info(f'Camera: fx={self.fx:.2f}, fy={self.fy:.2f}, pitch={self.get_parameter("cam_pitch_deg").value}°')
-        self.get_logger().info(f'Subscribing to: {self.detection_topic}')
+        # self.get_logger().info('Position Estimator with Pitch-compensated initialized')
+        # self.get_logger().info(f'Camera: fx={self.fx:.2f}, fy={self.fy:.2f}, pitch={self.get_parameter("cam_pitch_deg").value}°')
+        # self.get_logger().info(f'Subscribing to: {self.detection_topic}')
 
     def monitoring_callback(self, msg: Monitoring):
         """Update drone position from PX4 Monitoring"""

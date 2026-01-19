@@ -64,6 +64,8 @@ setup(
             'position_logger = balloon_hunter.position_logger:main',
             'csv_logger = balloon_hunter.csv_logger:main',
             'plot_from_csv = balloon_hunter.plot_from_csv:main',
+            'fisheye_undistort = balloon_hunter.fisheye_undistort:main',
+            'follower_drone_manager = balloon_hunter.follower_drone_manager:main',
         ],
     },
 )

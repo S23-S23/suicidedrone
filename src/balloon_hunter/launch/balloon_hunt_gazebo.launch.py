@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Balloon Hunter with Iris Stereo Camera Launch File
+Balloon Hunter with Iris Stereo Camera Launch File (Fixed for Multi-Drone Communication)
 """
 
 import os
@@ -15,9 +15,10 @@ from launch.actions import (
     IncludeLaunchDescription,
     SetEnvironmentVariable,
     TimerAction,
+    RegisterEventHandler,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-
+from launch.event_handlers import OnProcessExit
 
 def launch_setup(context, *args, **kwargs):
     # 패키지 경로 설정
@@ -26,15 +27,9 @@ def launch_setup(context, *args, **kwargs):
     gazebo_classic_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic'
 
     # 파라미터 가져오기
-    drone_id = int(LaunchConfiguration('drone_id').perform(context))
     model_path = LaunchConfiguration('model_path').perform(context)
 
-    # 1. PX4 환경 변수 설정 (Typhoon -> Iris 변경)
-    px4_sim_env = SetEnvironmentVariable('PX4_SIM_MODEL', 'gazebo-classic_iris')
-    px4_lat = SetEnvironmentVariable('PX4_HOME_LAT', '36.6299')
-    px4_lon = SetEnvironmentVariable('PX4_HOME_LON', '127.4588')
-
-    # 2. Gazebo 환경 변수 설정
+    # 1. PX4 및 Gazebo 환경 변수 설정
     resource_path_env = SetEnvironmentVariable('GAZEBO_RESOURCE_PATH', '/usr/share/gazebo-11')
     model_path_env = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
@@ -47,7 +42,7 @@ def launch_setup(context, *args, **kwargs):
         f'{px4_src_path}/build/px4_sitl_default/build_gazebo-classic/'
     )
 
-    # MicroXRCE Agent 실행
+    # MicroXRCE Agent 실행 (8888 포트)
     xrce_agent_process = ExecuteProcess(
         cmd=['MicroXRCEAgent', 'udp4', '-p', '8888'],
         output='screen',
@@ -55,7 +50,6 @@ def launch_setup(context, *args, **kwargs):
 
     # Gazebo 월드 실행
     world_file_path = os.path.join(current_package_path, 'worlds', 'balloon_hunt.world')
-    #world_file_path = os.path.join(px4_src_path, 'Tools/simulation/gazebo-classic/sitl_gazebo-classic/worlds', 'outdoor.world')
     gazebo_node = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(get_package_share_directory('gazebo_ros'), 'launch'),
@@ -68,172 +62,130 @@ def launch_setup(context, *args, **kwargs):
         }.items()
     )
 
-    # 3. 드론 모델 생성 (PX4의 iris_depth_camera 직접 사용)
-    # PX4의 iris_depth_camera.sdf를 사용 (모든 의존성 모델 포함)
-    drone_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_depth_camera/iris_depth_camera.sdf'
+    # 드론 모델 경로
+    drone1_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_depth_camera/iris_depth_camera.sdf'
+    drone2_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_fisheye_lens_camera/iris_fisheye_lens_camera.sdf'
+    drone3_sdf_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris_fisheye_lens_camera/iris_fisheye_lens_camera.sdf'
 
-    # Gazebo에 드론 스폰 (PX4 iris_depth_camera 모델 사용)
-    # Gazebo가 완전히 시작될 때까지 10초 대기 (europallet 모델 로딩 포함)
-    spawn_entity_node = TimerAction(
-        period=10.0,
-        actions=[
-            Node(
-                package='gazebo_ros',
-                executable='spawn_entity.py',
-                arguments=[
-                    '-file', drone_sdf_path,
-                    '-entity', f'drone{drone_id}',
-                    '-x', '0.0',
-                    '-y', '0.0',
-                    '-z', '0.1',
-                    '-Y', '1.5708'
-                ],
-                output='screen',
-            )
-        ]
+    # Gazebo 드론 스폰 노드
+    spawn_drone1 = Node(
+        package='gazebo_ros', executable='spawn_entity.py',
+        arguments=['-file', drone1_sdf_path, '-entity', 'drone1', '-x', '0.0', '-y', '0.0', '-z', '0.1', '-Y', '1.5708', '-robot_namespace', 'drone1'],
+        output='screen'
+    )
+    spawn_drone2 = Node(
+        package='gazebo_ros', executable='spawn_entity.py',
+        arguments=['-file', drone2_sdf_path, '-entity', 'drone2', '-x', '2.0', '-y', '0.0', '-z', '0.1', '-Y', '1.5708', '-robot_namespace', 'drone2'],
+        output='screen'
+    )
+    spawn_drone3 = Node(
+        package='gazebo_ros', executable='spawn_entity.py',
+        arguments=['-file', drone3_sdf_path, '-entity', 'drone3', '-x', '-2.0', '-y', '0.0', '-z', '0.1', '-Y', '1.5708', '-robot_namespace', 'drone3'],
+        output='screen'
     )
 
-    # 4. PX4 SITL 실행 (Iris 모델 적용)
-    px4_cmd = [
-        'env',
-        'PX4_SIM_MODEL=gazebo-classic_iris',
-        f'{px4_src_path}/build/px4_sitl_default/bin/px4',
-        '-i', '0',
-        '-d', f'{px4_src_path}/build/px4_sitl_default/etc',
-        '-w', f'{px4_src_path}/build/px4_sitl_default/ROMFS/instance0',
-    ]
+    # 순차 스폰 이벤트 핸들러 (3초 간격)
+    spawn_drone2_event = RegisterEventHandler(OnProcessExit(target_action=spawn_drone1, on_exit=[TimerAction(period=3.0, actions=[spawn_drone2])]))
+    spawn_drone3_event = RegisterEventHandler(OnProcessExit(target_action=spawn_drone2, on_exit=[TimerAction(period=3.0, actions=[spawn_drone3])]))
 
-    px4_process = ExecuteProcess(
-        cmd=px4_cmd,
-        output='screen',
+    # 4. PX4 SITL 실행 (드론 스폰 완료 후 시작)
+    # Drone 1 PX4 (Drone1 spawn 완료 후 2초 대기)
+    px4_process_1 = ExecuteProcess(
+        cmd=[f'{px4_src_path}/build/px4_sitl_default/bin/px4', '-i', '0', '-d', f'{px4_src_path}/build/px4_sitl_default/etc', '-w', f'{px4_src_path}/build/px4_sitl_default/ROMFS/instance0'],
+        additional_env={
+            'PX4_SIM_MODEL': 'gazebo-classic_iris',
+            'PX4_UXRCE_DDS_NS': 'drone1',
+            'PX4_UXRCE_DDS_PORT': '8888',
+            'PX4_SYS_ID': '1'
+        },
+        output='screen'
+    )
+    px4_1_event = RegisterEventHandler(OnProcessExit(target_action=spawn_drone1, on_exit=[TimerAction(period=2.0, actions=[px4_process_1])]))
+
+    # Drone 2 PX4 (Drone2 spawn 완료 후 2초 대기)
+    px4_process_2 = ExecuteProcess(
+        cmd=[f'{px4_src_path}/build/px4_sitl_default/bin/px4', '-i', '1', '-d', f'{px4_src_path}/build/px4_sitl_default/etc', '-w', f'{px4_src_path}/build/px4_sitl_default/ROMFS/instance1'],
+        additional_env={
+            'PX4_SIM_MODEL': 'gazebo-classic_iris',
+            'PX4_UXRCE_DDS_NS': 'drone2',
+            'PX4_UXRCE_DDS_PORT': '8888',
+            'PX4_SYS_ID': '2'
+        },
+        output='screen'
+    )
+    px4_2_event = RegisterEventHandler(OnProcessExit(target_action=spawn_drone2, on_exit=[TimerAction(period=2.0, actions=[px4_process_2])]))
+
+    # Drone 3 PX4 (Drone3 spawn 완료 후 2초 대기)
+    px4_process_3 = ExecuteProcess(
+        cmd=[f'{px4_src_path}/build/px4_sitl_default/bin/px4', '-i', '2', '-d', f'{px4_src_path}/build/px4_sitl_default/etc', '-w', f'{px4_src_path}/build/px4_sitl_default/ROMFS/instance2'],
+        additional_env={
+            'PX4_SIM_MODEL': 'gazebo-classic_iris',
+            'PX4_UXRCE_DDS_NS': 'drone3',
+            'PX4_UXRCE_DDS_PORT': '8888',
+            'PX4_SYS_ID': '3'
+        },
+        output='screen'
+    )
+    px4_3_event = RegisterEventHandler(OnProcessExit(target_action=spawn_drone3, on_exit=[TimerAction(period=2.0, actions=[px4_process_3])]))
+
+    # 5. 미션 노드 설정 (스폰 완료 후 지연 시작)
+
+    # GCS Station (Drone3 spawn 완료 후 5초 대기)
+    gcs_station = Node(
+        package='balloon_hunter', executable='gcs_station', name='gcs_station', output='screen',
+        parameters=[{'system_id': 1, 'rgb_camera_topic': '/drone1/camera/image_raw', 'depth_camera_topic': '/drone1/camera/depth/image_raw', 'target_position_topic': '/balloon_target_position', 'monitoring_topic': '/drone1/fmu/out/monitoring', 'display_fps': 2, 'focal_length': 705.5, 'cx': 640.0, 'cy': 360.0}]
     )
 
-    # 5. 미션 노드 설정 (GCS-based system - YOLO nodes disabled)
-    # balloon_detector = Node(
-    #     package='balloon_hunter',
-    #     executable='balloon_detector',
-    #     name='balloon_detector',
-    #     output='screen',
-    #     parameters=[{
-    #         'system_id': drone_id,
-    #         # 스테레오 카메라의 왼쪽 영상을 기본 분석용으로 사용
-    #         'camera_topic': '/left_camera/image_raw',
-    #         'model_path': model_path,
-    #         'conf': 0.5,
-    #         'target_class': 'sports ball'
-    #     }]
-    # )
-
-    # position_estimator = Node(
-    #     package='balloon_hunter',
-    #     executable='position_estimator',
-    #     name='position_estimator',
-    #     output='screen',
-    #     parameters=[{
-    #         'system_id': drone_id,
-    #         'detection_topic': f'/Yolov8_Inference_{drone_id}',
-    #         'position_topic': f'/drone{drone_id}/fmu/out/vehicle_local_position',
-    #         'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
-    #         'target_position_topic': '/balloon_target_position'
-    #     }]
-    # )
-
-    # New GCS-based system (all-in-one node) - Depth Camera Mode
-    # Wait for drone spawn (5s) + camera initialization (3s) = 8s total delay
-    # GCS station - 드론 spawn(10초) + 카메라 초기화(3초) = 13초 대기
-    gcs_station = TimerAction(
-        period=13.0,
-        actions=[
-            Node(
-                package='balloon_hunter',
-                executable='gcs_station',
-                name='gcs_station',
-                output='screen',
-                parameters=[{
-                    'system_id': drone_id,
-                    'rgb_camera_topic': '/camera/image_raw',
-                    'depth_camera_topic': '/camera/depth/image_raw',
-                    'target_position_topic': '/balloon_target_position',
-                    'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
-                    'display_fps': 5,
-                    # Depth camera parameters (RealSense D455: 848x480)
-                    # Focal length calculated from FOV: f = width / (2 * tan(FOV/2))
-                    # FOV = 1.5009831567 rad = 86 degrees
-                    # f = 848 / (2 * tan(1.5009831567/2)) = 848 / 1.557 = 544.6
-                    'focal_length': 544.6,
-                    'cx': 424.0,  # Principal point x (848/2 = 424)
-                    'cy': 240.0,  # Principal point y (480/2 = 240)
-                    'cam_pitch_deg': 0.0
-                }]
-            )
-        ]
+    # Leader Drone Manager (Drone3 spawn 완료 후 5초 대기)
+    leader_drone_manager = Node(
+        package='balloon_hunter', executable='drone_manager', name='leader_drone_manager', output='screen',
+        parameters=[{'system_id': 1, 'takeoff_height': 2.0, 'forward_speed': 4.0, 'tracking_speed': 3.0, 'charge_speed': 5.0, 'charge_distance': 3.0, 'collision_distance': 0.5}]
     )
 
-    drone_manager = Node(
-        package='balloon_hunter',
-        executable='drone_manager',
-        name='balloon_hunter_drone_manager',
-        output='screen',
-        parameters=[{
-            'system_id': drone_id,
-            'takeoff_height': 2.0,
-            'forward_speed': 4.0,
-            'tracking_speed': 3.0,
-            'charge_speed': 5.0,
-            'charge_distance': 3.0,
-            'collision_distance': 0.5
-        }]
+    # Fisheye Undistort (Drone3 spawn 완료 후 5초 대기)
+    undistort_drone2 = Node(package='balloon_hunter', executable='fisheye_undistort', name='fisheye_undistort_drone2', output='screen', parameters=[{'drone_id': 2, 'image_width': 640, 'image_height': 480}])
+    undistort_drone3 = Node(package='balloon_hunter', executable='fisheye_undistort', name='fisheye_undistort_drone3', output='screen', parameters=[{'drone_id': 3, 'image_width': 640, 'image_height': 480}])
+
+    # Follower Managers (Drone3 spawn 완료 후 5초 대기)
+    follower_drone2_manager = Node(
+        package='balloon_hunter', executable='follower_drone_manager', name='follower_drone2_manager', output='screen',
+        parameters=[{'drone_id': 2, 'takeoff_height': 2.0, 'formation_offset_x': 0.0, 'formation_offset_y': 2.0, 'leader_drone_id': 1, 'image_width': 640, 'image_height': 480, 'focal_length': 203.7, 'cx': 320.0, 'cy': 240.0}]
+    )
+    follower_drone3_manager = Node(
+        package='balloon_hunter', executable='follower_drone_manager', name='follower_drone3_manager', output='screen',
+        parameters=[{'drone_id': 3, 'takeoff_height': 2.0, 'formation_offset_x': 0.0, 'formation_offset_y': -2.0, 'leader_drone_id': 1, 'image_width': 640, 'image_height': 480, 'focal_length': 203.7, 'cx': 320.0, 'cy': 240.0}]
     )
 
-    collision_handler = Node(
-        package='balloon_hunter',
-        executable='collision_handler',
-        name='collision_handler',
-        output='screen',
-        parameters=[{
-            'collision_distance': 0.5,
-            'drone_id': drone_id
-        }]
+    # 모든 미션 노드를 Drone3 spawn 완료 후 5초 뒤에 시작
+    mission_nodes_event = RegisterEventHandler(
+        OnProcessExit(
+            target_action=spawn_drone3,
+            on_exit=[TimerAction(
+                period=5.0,
+                actions=[
+                    gcs_station,
+                    leader_drone_manager,
+                    undistort_drone2,
+                    undistort_drone3,
+                    follower_drone2_manager,
+                    follower_drone3_manager
+                ]
+            )]
+        )
     )
 
-    # Position Logger (디버깅용 - 위치 기록 및 시각화)
-    # 15초 후에 시작 (Gazebo(0s) + Spawn(10s) + 안정화(5s))
-    position_logger = TimerAction(
-        period=13.0,
-        actions=[
-            Node(
-                package='balloon_hunter',
-                executable='position_logger',
-                name='position_logger',
-                output='screen',
-                parameters=[{
-                    'target_x': 0.0,
-                    'target_y': 7.0,
-                    'target_z': 3.0,
-                    'log_directory': '/home/kiki/visionws/logs'
-                }]
-            )
-        ]
-    )
-
-    nodes_to_start = [
-        px4_lat, px4_lon, resource_path_env, px4_sim_env,
-        model_path_env, plugin_path_env,
+    return [
+        resource_path_env, model_path_env, plugin_path_env,
         xrce_agent_process, gazebo_node,
-        spawn_entity_node, px4_process,
-        # balloon_detector, position_estimator,  # Disabled for GCS-based system
-        gcs_station,  # New GCS-based all-in-one node (Depth Camera Mode)
-        drone_manager, collision_handler,
-        position_logger,  # Position logging and visualization (starts after 15s)
+        TimerAction(period=10.0, actions=[spawn_drone1]),
+        spawn_drone2_event, spawn_drone3_event,
+        px4_1_event, px4_2_event, px4_3_event,  # PX4 프로세스를 드론 스폰 후 시작
+        mission_nodes_event  # 모든 미션 노드를 하나의 이벤트로 통합
     ]
-
-    return nodes_to_start
-
 
 def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
-        DeclareLaunchArgument('drone_id', default_value='1'),
         DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt')
     ]
     return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])

@@ -43,7 +43,7 @@ class BalloonHunterDroneManager(Node):
         self.charge_distance = self.get_parameter('charge_distance').value
         self.collision_distance = self.get_parameter('collision_distance').value
 
-        self.get_logger().info(f"Drone Manager {self.system_id} Initializing with Monitoring...")
+        #self.get_logger().info(f"Drone Manager {self.system_id} Initializing with Monitoring...")
 
         self.topic_prefix_fmu = f"drone{self.system_id}/fmu/"
 
@@ -112,7 +112,7 @@ class BalloonHunterDroneManager(Node):
 
     def timer_mission_callback(self):
         # Log current state periodically
-        self.get_logger().info(f'[DEBUG] Current state: {self.state}, pos=({self.drone_pos[0]:.2f},{self.drone_pos[1]:.2f},{self.drone_pos[2]:.2f}), armed={self.arming_state}, nav={self.nav_state}', throttle_duration_sec=3.0)
+        #self.get_logger().info(f'[DEBUG] Current state: {self.state}, pos=({self.drone_pos[0]:.2f},{self.drone_pos[1]:.2f},{self.drone_pos[2]:.2f}), armed={self.arming_state}, nav={self.nav_state}', throttle_duration_sec=3.0)
 
         if self.state == MissionState.IDLE:
             # Send safe initial position (current or slightly above ground)
@@ -161,7 +161,7 @@ class BalloonHunterDroneManager(Node):
 
         # 3. Check if target altitude reached
         if abs(self.drone_pos[2] - target_alt) < 0.3:
-            self.get_logger().info('Takeoff Success! Starting forward flight.')
+            #self.get_logger().info('Takeoff Success! Starting forward flight.')
             self.forward_start_pos = self.drone_pos.copy()  # Save starting position
             self.state = MissionState.FORWARD
             return
@@ -170,15 +170,15 @@ class BalloonHunterDroneManager(Node):
         # Initialize start position if not set
         if self.forward_start_pos is None:
             self.forward_start_pos = self.drone_pos.copy()
-            self.get_logger().info(f'[DEBUG] Forward flight started from position: ({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f})')
+            #self.get_logger().info(f'[DEBUG] Forward flight started from position: ({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f})')
 
         # Check if forward distance limit reached
         distance_traveled = np.linalg.norm(self.drone_pos[:2] - self.forward_start_pos[:2])
 
-        self.get_logger().info(f'[DEBUG] FORWARD state: pos=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}, {self.drone_pos[2]:.2f}), traveled={distance_traveled:.2f}m, waiting for GCS target...', throttle_duration_sec=2.0)
+        self.get_logger().info(f'[DEBUG] FORWARD state: pos=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}, {self.drone_pos[2]:.2f}), traveled={distance_traveled:.2f}m, waiting for GCS target...', throttle_duration_sec=4.0)
 
         if distance_traveled >= self.forward_distance_limit:
-            self.get_logger().info(f'Forward distance limit reached ({distance_traveled:.2f}m). Hovering and waiting for GCS target selection...', throttle_duration_sec=5.0)
+            #self.get_logger().info(f'Forward distance limit reached ({distance_traveled:.2f}m). Hovering and waiting for GCS target selection...', throttle_duration_sec=5.0)
             # Hover in current position, waiting for GCS ROI selection
             self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], -self.takeoff_height])
             return
@@ -191,34 +191,53 @@ class BalloonHunterDroneManager(Node):
         self.publish_trajectory_setpoint([next_pos[0], next_pos[1], -self.takeoff_height])
 
     def handle_tracking(self):
-        self.get_logger().info(f'[DEBUG] TRACKING state: drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}), target={self.target_pos if self.target_pos is not None else "None"}', throttle_duration_sec=1.0)
+        """
+        Leader drone (drone1): GCS에서 ROI 선택 시 타겟 글로벌 좌표 계산 후 호버링
+        직충돌 공격 로직은 디버깅을 위해 주석처리
+        """
+        self.get_logger().info(f'[DEBUG] TRACKING state (HOVERING): drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}), target={self.target_pos if self.target_pos is not None else "None"}', throttle_duration_sec=2.0)
 
         if self.target_pos is None:
             self.get_logger().warn('[DEBUG] Target lost, returning to FORWARD')
             self.state = MissionState.FORWARD
             return
+
+        # 타겟을 향한 방향으로 yaw 회전하면서 현재 위치에서 호버링
         diff = self.target_pos - self.drone_pos
-        if np.linalg.norm(diff[:2]) < self.charge_distance:
-            self.state = MissionState.CHARGING
-            return
-        direction = diff / (np.linalg.norm(diff) + 1e-6)
-        next_pos = self.drone_pos + direction * self.tracking_speed * 0.5
-        self.publish_trajectory_setpoint([next_pos[0], next_pos[1], -self.takeoff_height], yaw=math.atan2(diff[1], diff[0]))
+        target_yaw = math.atan2(diff[1], diff[0])
+
+        # 현재 위치 유지 (호버링)
+        self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], -self.takeoff_height], yaw=target_yaw)
+
+        # 충돌 로직 주석처리 (디버깅용)
+        # if np.linalg.norm(diff[:2]) < self.charge_distance:
+        #     self.state = MissionState.CHARGING
+        #     return
+        # direction = diff / (np.linalg.norm(diff) + 1e-6)
+        # next_pos = self.drone_pos + direction * self.tracking_speed * 0.5
+        # self.publish_trajectory_setpoint([next_pos[0], next_pos[1], -self.takeoff_height], yaw=target_yaw)
 
     def handle_charging(self):
-        self.get_logger().info(f'[DEBUG] CHARGING state: drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}), target={self.target_pos if self.target_pos is not None else "None"}', throttle_duration_sec=1.0)
+        """
+        충돌 공격 로직 - 디버깅을 위해 주석처리
+        """
+        self.get_logger().info(f'[DEBUG] CHARGING state (DISABLED): drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f})', throttle_duration_sec=1.0)
 
-        if self.target_pos is None:
-            self.state = MissionState.DONE
-            return
-        diff = self.target_pos - self.drone_pos
-        if np.linalg.norm(diff) < self.collision_distance:
-            self.get_logger().info('HIT!')
-            self.state = MissionState.DONE
-            return
-        direction = diff / (np.linalg.norm(diff) + 1e-6)
-        next_pos = self.drone_pos + direction * self.charge_speed * 0.8
-        self.publish_trajectory_setpoint(next_pos, yaw=math.atan2(diff[1], diff[0]))
+        # 호버링 유지
+        self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], -self.takeoff_height], yaw=self.drone_yaw)
+
+        # 충돌 로직 주석처리
+        # if self.target_pos is None:
+        #     self.state = MissionState.DONE
+        #     return
+        # diff = self.target_pos - self.drone_pos
+        # if np.linalg.norm(diff) < self.collision_distance:
+        #     self.get_logger().info('HIT!')
+        #     self.state = MissionState.DONE
+        #     return
+        # direction = diff / (np.linalg.norm(diff) + 1e-6)
+        # next_pos = self.drone_pos + direction * self.charge_speed * 0.8
+        # self.publish_trajectory_setpoint(next_pos, yaw=math.atan2(diff[1], diff[0]))
 
     def handle_done(self):
         self.publish_trajectory_setpoint(self.drone_pos, yaw=self.drone_yaw)

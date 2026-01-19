@@ -62,14 +62,14 @@ class GCSStation(Node):
 
         # 4. 타이머 및 UI
         self.display_timer = self.create_timer(1.0 / self.get_parameter('display_fps').value, self.display_callback)
-        self.process_timer = self.create_timer(0.05, self.process_callback) # 20Hz로 더 빠르게 추적
+        self.process_timer = self.create_timer(0.2, self.process_callback) # 5Hz로 낮춰서 통신 부하 감소
 
         self.window_name = f'GCS Station - Depth Tracking Mode'
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, 848, 480)
+        cv2.resizeWindow(self.window_name, 1280, 720)
         cv2.setMouseCallback(self.window_name, self.mouse_callback)
 
-        self.get_logger().info('GCS Node: Depth-based Segmentation Tracking Active')
+        #self.get_logger().info('GCS Node: Depth-based Segmentation Tracking Active')
 
     def rgb_image_callback(self, msg):
         self.rgb_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
