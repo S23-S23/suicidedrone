@@ -66,7 +66,7 @@ class GCSStation(Node):
 
         self.window_name = f'GCS Station - Depth Tracking Mode'
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, 1280, 720)
+        cv2.resizeWindow(self.window_name, 848, 480)
         cv2.setMouseCallback(self.window_name, self.mouse_callback)
 
         #self.get_logger().info('GCS Node: Depth-based Segmentation Tracking Active')

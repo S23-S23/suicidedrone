@@ -251,7 +251,8 @@ class BalloonHunterDroneManager(Node):
     def publish_vehicle_command(self, command, p1=0.0, p2=0.0):
         msg = VehicleCommand()
         msg.param1, msg.param2, msg.command = p1, p2, command
-        msg.target_system, msg.target_component, msg.source_system, msg.source_component, msg.from_external = self.system_id, 1, 1, 1, True
+        # source_system을 self.system_id로 변경하여 멀티드론 환경에서 올바른 드론에게 명령 전달
+        msg.target_system, msg.target_component, msg.source_system, msg.source_component, msg.from_external = self.system_id, 1, self.system_id, 1, True
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher.publish(msg)
 
