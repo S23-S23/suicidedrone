@@ -1,4 +1,5 @@
 import os
+import time
 from jinja2 import Environment, FileSystemLoader
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -55,17 +56,18 @@ def launch_setup(context, *args, **kwargs):
 
     drone_process_list = []
     for i in range(num_drone):
+        target_ids = [4, 2, 3, 5]
         jinja_cmd = [
             f'{gazebo_classic_path}/scripts/jinja_gen.py',
             f'{current_package_path}/models/iris_fisheye_lens_camera/iris_fisheye_lens_camera.sdf.jinja',
             f'{current_package_path}',
-            '--mavlink_tcp_port', f'{4560+i+1}',
-            '--mavlink_udp_port', f'{14560+i+1}',
-            '--mavlink_id', f'{1+i+1}',
-            '--gst_udp_port' , f'{5600+i+1}' ,
-            '--video_uri', f'{5600+i+1}',
-            '--mavlink_cam_udp_port', f'{14530+i+1}',
-            '--output-file', f'/tmp/model_{i}.sdf'
+            '--mavlink_tcp_port', f'{4560+target_ids[i]-1}',
+            '--mavlink_udp_port', f'{14560+target_ids[i]-1}',
+            '--mavlink_id', f'{1+target_ids[i]-1}',
+            '--gst_udp_port' , f'{5600+target_ids[i]-1}' ,
+            '--video_uri', f'{5600+target_ids[i]-1}',
+            '--mavlink_cam_udp_port', f'{14530+target_ids[i]-1}',
+            '--output-file', f'/tmp/model_{target_ids[i]}.sdf'
         ]
         jinja_process = ExecuteProcess(
             cmd=jinja_cmd,
@@ -81,8 +83,8 @@ def launch_setup(context, *args, **kwargs):
         ## one line without leader drone
         grid_idx = i if i < 2 else i + 1
 
-        agent_x = -10.0 + 2.0 * grid_idx
-        agent_y = -15.0
+        agent_x = -4.0 + 2.0 * grid_idx
+        agent_y = 0.0
 
         # ## square
         # agent_x = 3.0 * (-1)**i
@@ -98,7 +100,7 @@ def launch_setup(context, *args, **kwargs):
         spawn_entity_node = Node(
             package='gazebo_ros',
             executable='spawn_entity.py',
-            arguments=['-file', f'/tmp/model_{i}.sdf', '-entity', f'robot_{i}', '-x', f'{agent_x}', '-y', f'{agent_y}','-z', '0.4'],
+            arguments=['-file', f'/tmp/model_{target_ids[i]}.sdf', '-entity', f'robot_{target_ids[i]}', '-x', f'{agent_x}', '-y', f'{agent_y}','-z', '0.4'],
             #output='screen',
             )
 
@@ -110,10 +112,10 @@ def launch_setup(context, *args, **kwargs):
             'env',
             'PX4_SIM_MODEL=gazebo-classic_iris',
             f'{px4_src_path}/build/px4_sitl_default/bin/px4',
-            '-i', f'{i+1}',
+            '-i', f'{target_ids[i]-1}',
             '-d',
             f'{px4_src_path}/build/px4_sitl_default/etc',
-            '-w', f'{px4_src_path}/build/px4_sitl_default/ROMFS/instance{i+1}',
+            '-w', f'{px4_src_path}/build/px4_sitl_default/ROMFS/instance{target_ids[i]-1}',
             '>out.log', '2>err.log',
         ]
 
@@ -127,10 +129,11 @@ def launch_setup(context, *args, **kwargs):
         PythonLaunchDescriptionSource([os.path.join(
             current_package_path, 'launch'), '/follower_drone.launch.py']),
         launch_arguments={
-            'drone_id': f'{i+2}',
+            'drone_id': f'{str(target_ids[i])}',
+            'formation_degree': str(60.0),
+            'formation_distance': str(1.5)
             }.items()
         )
-
         drone_process_list.append(manager)
 
     node_run  = [

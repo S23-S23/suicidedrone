@@ -80,7 +80,7 @@ class TakeoffMission():
             success, distance = self.isOnSetpoint(setpoint)
             if not success:
                 self.setpoint(setpoint)
-                # print("distance", distance)
+                self.node.get_logger().info(f"distance: {distance}")
                 # print(f"drone : {setpoint}")
             else:
                 self.currentProgressStatus=ProgressStatus(self.currentProgressStatus.value + 1)
@@ -113,7 +113,7 @@ class TakeoffMission():
 
     def isOnSetpoint(self, targetPOS):
         distance = self.distance(self.POS(), targetPOS)
-        return (distance < 0.1), distance
+        return (distance < 0.2), distance
 
     def setpoint(self, setpoint, yaw=0.0):
         msg = TrajectorySetpoint()

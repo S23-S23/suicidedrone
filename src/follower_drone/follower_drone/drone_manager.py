@@ -89,6 +89,7 @@ class DroneManager(Node):
             )
         setpoint = TrajectorySetpoint()
         setpoint.position = self.formation.calculate_position()
+        setpoint.yaw = self.formation.calculate_yaw()
         self.traj_setpoint_publisher_.publish(setpoint)
 
     def monitoring_callback(self, msg):

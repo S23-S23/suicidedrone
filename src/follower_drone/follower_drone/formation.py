@@ -16,10 +16,10 @@ class Formation:
 
         if self.drone_id % 2 == 0:
             layer = self.drone_id // 2
-            theta = -self.angle_radian
+            theta = self.angle_radian
         else:
             layer = (self.drone_id - 1) // 2
-            theta = self.angle_radian
+            theta = -self.angle_radian
 
         distance = self.distance * layer
         target_radian = yaw_leader + np.pi + theta
@@ -28,3 +28,9 @@ class Formation:
         target_y = (y_leader + distance * np.sin(target_radian)) + self.takeoff_offset[1]
 
         return [target_x, target_y, self.node.leader_monitoring_msg.pos_z]
+
+    def calculate_yaw(self):
+        if self.drone_id % 2 == 0:
+            return self.node.leader_monitoring_msg.head + self.angle_radian
+        else:
+            return self.node.leader_monitoring_msg.head - self.angle_radian
