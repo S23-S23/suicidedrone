@@ -22,6 +22,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 def launch_setup(context, *args, **kwargs):
     # 패키지 경로 설정
     current_package_path = get_package_share_directory('balloon_hunter')
+    follower_drone_package_path = get_package_share_directory('follower_drone')
     px4_src_path = LaunchConfiguration('px4_src_path').perform(context)
     gazebo_classic_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic'
 
@@ -40,6 +41,7 @@ def launch_setup(context, *args, **kwargs):
         'GAZEBO_MODEL_PATH',
         f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:'
         f'{current_package_path}/models:'
+        f'{follower_drone_package_path}/models:'
         f'{gazebo_classic_path}/models'
     )
     plugin_path_env = SetEnvironmentVariable(
