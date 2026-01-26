@@ -14,7 +14,7 @@ from launch.actions import (
     RegisterEventHandler,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnShutdown
 
 def launch_setup(context, *args, **kwargs):
     # 1. 경로 및 파라미터 설정
@@ -35,6 +35,30 @@ def launch_setup(context, *args, **kwargs):
         'GAZEBO_PLUGIN_PATH',
         f'{px4_src_path}/build/px4_sitl_default/build_gazebo-classic/'
     )
+    gz_ip_env = SetEnvironmentVariable('GZ_IP', '127.0.0.1')
+
+    # # 2.5. 네트워크 격리 (외부 트래픽 차단, localhost만 허용)
+    # block_external_traffic = ExecuteProcess(
+    #     cmd=['sudo', 'iptables', '-I', 'OUTPUT', '1', '-o', 'lo', '-j', 'ACCEPT'],
+    #     output='screen'
+    # )
+    # block_external_traffic2 = ExecuteProcess(
+    #     cmd=['sudo', 'iptables', '-A', 'OUTPUT', '-m', 'state', '--state', 'ESTABLISHED,RELATED', '-j', 'ACCEPT'],
+    #     output='screen'
+    # )
+    # block_external_traffic3 = ExecuteProcess(
+    #     cmd=['sudo', 'iptables', '-A', 'OUTPUT', '-j', 'DROP'],
+    #     output='screen'
+    # )
+
+    # # 종료 시 iptables 규칙 복구
+    # restore_network = RegisterEventHandler(
+    #     OnShutdown(on_shutdown=[
+    #         ExecuteProcess(cmd=['sudo', 'iptables', '-D', 'OUTPUT', '-j', 'DROP'], output='screen'),
+    #         ExecuteProcess(cmd=['sudo', 'iptables', '-D', 'OUTPUT', '-m', 'state', '--state', 'ESTABLISHED,RELATED', '-j', 'ACCEPT'], output='screen'),
+    #         ExecuteProcess(cmd=['sudo', 'iptables', '-D', 'OUTPUT', '-o', 'lo', '-j', 'ACCEPT'], output='screen'),
+    #     ])
+    # )
 
     # 3. 인프라 실행 (Agent & Gazebo)
     xrce_agent_process = ExecuteProcess(
@@ -147,7 +171,9 @@ def launch_setup(context, *args, **kwargs):
     mission_nodes_event = RegisterEventHandler(OnProcessExit(target_action=spawn_drone3, on_exit=[TimerAction(period=15.0, actions=[gcs_station, leader_drone_manager, undistort_drone2, undistort_drone3, follower_drone2_manager, follower_drone3_manager])]))
 
     return [
-        resource_path_env, model_path_env, plugin_path_env,
+        # block_external_traffic, block_external_traffic2, block_external_traffic3,
+        # restore_network,
+        resource_path_env, model_path_env, plugin_path_env, gz_ip_env,
         xrce_agent_process, gazebo_node,
         gen_sdf_drone1, gen_sdf_drone2, gen_sdf_drone3, # SDF 생성은 즉시 시작
         start_spawn_drone1,

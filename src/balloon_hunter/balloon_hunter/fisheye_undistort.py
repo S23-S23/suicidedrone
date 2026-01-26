@@ -2,11 +2,21 @@
 """
 Fisheye Lens Undistortion Node
 어안렌즈로 들어온 image_raw를 일반 카메라처럼 펼쳐서 재발행합니다.
+
+Gazebo Fisheye Camera 설정:
+- horizontal_fov: 3.1415 rad (180도)
+- cutoff_angle: 1.5707 rad (90도)
+- type: equidistant
+- resolution: 640x480
+
+Equidistant fisheye 모델: r = f * theta
+여기서 theta = cutoff_angle = π/2 일 때 r = width/2
+따라서 f = (width/2) / (π/2) = width / π ≈ 203.7
 """
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -28,35 +38,39 @@ class FisheyeUndistort(Node):
         # CvBridge
         self.bridge = CvBridge()
 
-        # 어안렌즈 카메라 파라미터 (Gazebo iris_fisheye_lens_camera 기준)
-        # horizontal_fov: 3.1415 rad (180도), 640x480 resolution
-        # FOV = 180도일 때 tan(90도) = 무한대이므로 작은 FOV 사용
-        # 실제로는 cutoff_angle = 1.5707 (90도)를 사용
-        # 카메라 내부 파라미터 행렬 K
-        # f = width / (2 * tan(FOV/2))
-        # 180도 FOV를 위해서는 매우 작은 focal length 필요
-        fx = self.img_width / (2 * np.tan(np.pi / 4))  # 실질적으로 90도 FOV 사용
-        fy = fx
+        # Gazebo Equidistant Fisheye 모델의 원본 K 행렬
+        # f = (width/2) / cutoff_angle = 320 / 1.5707 ≈ 203.7
+        fx_orig = self.img_width / np.pi  # 203.7
+        fy_orig = fx_orig
         cx = self.img_width / 2.0
         cy = self.img_height / 2.0
 
         self.K = np.array([
-            [fx, 0, cx],
-            [0, fy, cy],
+            [fx_orig, 0, cx],
+            [0, fy_orig, cy],
             [0, 0, 1]
         ], dtype=np.float32)
 
-        # 어안렌즈 왜곡 계수 (Equidistant 모델)
-        # k1, k2, k3, k4 (Gazebo에서는 기본적으로 왜곡 없음으로 설정되어 있을 수 있음)
+        # 어안렌즈 왜곡 계수 (Gazebo에서는 기본적으로 왜곡 없음)
         self.D = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
         # Undistortion을 위한 새로운 카메라 매트릭스 계산
+        # balance=0.0: 유효 픽셀만 보존 (검은 영역 최소화)
+        # balance=1.0: 모든 원본 픽셀 보존 (검은 영역 많음)
         self.new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
             self.K, self.D,
             (self.img_width, self.img_height),
             np.eye(3),
-            balance=0.0
+            balance=0.5  # 적절한 균형
         )
+
+        # new_K의 focal length를 follower_drone_manager에서 사용해야 함
+        self.new_fx = self.new_K[0, 0]
+        self.new_fy = self.new_K[1, 1]
+        self.new_cx = self.new_K[0, 2]
+        self.new_cy = self.new_K[1, 2]
+
+        self.get_logger().info(f'[Drone {self.drone_id}] Undistorted K: fx={self.new_fx:.2f}, fy={self.new_fy:.2f}, cx={self.new_cx:.2f}, cy={self.new_cy:.2f}')
 
         # Undistortion 맵 계산 (한 번만 계산하여 재사용)
         self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(
@@ -82,9 +96,12 @@ class FisheyeUndistort(Node):
             1
         )
 
-        #self.get_logger().info(f'Fisheye Undistort Node Started for Drone {self.drone_id}')
-        #self.get_logger().info(f'K matrix:\n{self.K}')
-        #self.get_logger().info(f'New K matrix:\n{self.new_K}')
+        # CameraInfo 발행 (follower가 정확한 K 행렬 사용 가능하도록)
+        self.camera_info_pub = self.create_publisher(
+            CameraInfo,
+            f'/drone{self.drone_id}/camera/camera_info',
+            1
+        )
 
     def image_callback(self, msg):
         """어안렌즈 이미지를 받아서 왜곡 보정 후 재발행 (5Hz 제한)"""
@@ -108,6 +125,23 @@ class FisheyeUndistort(Node):
 
             # 발행
             self.undistorted_pub.publish(undistorted_msg)
+
+            # CameraInfo 발행
+            camera_info = CameraInfo()
+            camera_info.header = msg.header
+            camera_info.width = self.img_width
+            camera_info.height = self.img_height
+            # ROS2 CameraInfo.k는 array('d', ...) 형식이어야 함
+            camera_info.k = [float(self.new_fx), 0.0, float(self.new_cx),
+                            0.0, float(self.new_fy), float(self.new_cy),
+                            0.0, 0.0, 1.0]
+            camera_info.d = []  # undistorted (빈 배열)
+            camera_info.distortion_model = 'plumb_bob'
+            camera_info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+            camera_info.p = [float(self.new_fx), 0.0, float(self.new_cx), 0.0,
+                            0.0, float(self.new_fy), float(self.new_cy), 0.0,
+                            0.0, 0.0, 1.0, 0.0]
+            self.camera_info_pub.publish(camera_info)
 
         except Exception as e:
             self.get_logger().error(f'Undistortion failed: {e}')

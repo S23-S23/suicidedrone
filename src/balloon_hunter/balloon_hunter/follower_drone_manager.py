@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Follower Drone Manager (Drone 2, 3)
-수정 사항: 로깅 강화 및 이륙 판정 로직 안정화
+수정 사항:
+- 로깅 강화 및 이륙 판정 로직 안정화
+- 동적 ROI 크기 계산 (거리 기반)
+- CameraInfo 구독으로 정확한 K 행렬 사용
 """
 
 import rclpy
@@ -15,7 +18,7 @@ from px4_msgs.msg import (
     Monitoring
 )
 from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 from enum import Enum
 import numpy as np
@@ -39,12 +42,16 @@ class FollowerDroneManager(Node):
         self.declare_parameter('formation_offset_y', 2.0)
         self.declare_parameter('leader_drone_id', 1)
 
-        # Camera intrinsics (Fisheye)
+        # Camera intrinsics (Fisheye undistorted)
         self.declare_parameter('image_width', 640)
         self.declare_parameter('image_height', 480)
-        self.declare_parameter('focal_length', 203.7)
+        self.declare_parameter('focal_length', 203.7)  # Default, will be updated from CameraInfo
         self.declare_parameter('cx', 320.0)
         self.declare_parameter('cy', 240.0)
+
+        # ROI 크기 관련 파라미터
+        self.declare_parameter('target_physical_size', 0.5)  # 타겟의 실제 크기 (m) - 풍선 기준
+        self.declare_parameter('roi_offset_ratio', 1.5)  # ROI 확대 비율 (안전 마진)
 
         self.drone_id = self.get_parameter('drone_id').value
         self.system_id = self.drone_id  # PX4 MAVLink System ID (drone_id와 동일)
@@ -52,14 +59,17 @@ class FollowerDroneManager(Node):
         self.formation_offset_x = self.get_parameter('formation_offset_x').value
         self.formation_offset_y = self.get_parameter('formation_offset_y').value
         self.leader_drone_id = self.get_parameter('leader_drone_id').value
+        self.target_physical_size = self.get_parameter('target_physical_size').value
+        self.roi_offset_ratio = self.get_parameter('roi_offset_ratio').value
 
-        # Camera Setup
+        # Camera Setup (초기값, CameraInfo에서 업데이트됨)
         self.img_width = self.get_parameter('image_width').value
         self.img_height = self.get_parameter('image_height').value
         fx = self.get_parameter('focal_length').value
         self.K = np.array([[fx, 0, self.get_parameter('cx').value],
                           [0, fx, self.get_parameter('cy').value],
                           [0, 0, 1]], dtype=np.float32)
+        self.camera_info_received = False
 
         self.topic_prefix_fmu = f"drone{self.drone_id}/fmu/"
         self.state = FollowerState.IDLE
@@ -68,6 +78,7 @@ class FollowerDroneManager(Node):
         self.leader_pos = None
         self.target_global_pos = None
         self.predicted_uv = None
+        self.predicted_roi_size = 50  # 기본 ROI 크기 (픽셀)
         self.nav_state = 0
         self.arming_state = 0
         self.last_cmd_time = 0
@@ -87,6 +98,7 @@ class FollowerDroneManager(Node):
         self.leader_monitoring_sub = self.create_subscription(Monitoring, f'/drone{self.leader_drone_id}/fmu/out/monitoring', self.leader_monitoring_callback, qos_best_effort)
         self.target_sub = self.create_subscription(PoseStamped, '/balloon_target_position', self.target_callback, 10)
         self.image_sub = self.create_subscription(Image, f'/drone{self.drone_id}/camera/image_undistorted', self.image_callback, 1)
+        self.camera_info_sub = self.create_subscription(CameraInfo, f'/drone{self.drone_id}/camera/camera_info', self.camera_info_callback, 1)
 
         # Timers
         self.create_timer(0.1, self.timer_ocm_callback)
@@ -110,14 +122,26 @@ class FollowerDroneManager(Node):
     def leader_monitoring_callback(self, msg):
         self.leader_pos = np.array([msg.pos_x, msg.pos_y, msg.pos_z])
 
+    def camera_info_callback(self, msg):
+        """CameraInfo에서 undistorted 이미지의 실제 K 행렬 업데이트"""
+        if not self.camera_info_received:
+            self.K = np.array([[msg.k[0], msg.k[1], msg.k[2]],
+                              [msg.k[3], msg.k[4], msg.k[5]],
+                              [msg.k[6], msg.k[7], msg.k[8]]], dtype=np.float32)
+            self.camera_info_received = True
+            self.get_logger().info(f'[Follower {self.drone_id}] CameraInfo received: fx={msg.k[0]:.2f}, cx={msg.k[2]:.2f}, cy={msg.k[5]:.2f}')
+
     def target_callback(self, msg):
         self.target_global_pos = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
-        self.predicted_uv = self.project_global_to_uv(self.target_global_pos)
-        if self.predicted_uv:
+        result = self.project_global_to_uv(self.target_global_pos)
+        if result:
+            self.predicted_uv, self.predicted_roi_size = result
             u, v = self.predicted_uv
             if 0 <= u < self.img_width and 0 <= v < self.img_height and self.state == FollowerState.FORMATION_FLIGHT:
                 self.get_logger().info(f'[Follower {self.drone_id}] Target detected in camera! Switching to HOVERING.')
                 self.state = FollowerState.HOVERING
+        else:
+            self.predicted_uv = None
 
     def image_callback(self, msg):
         try:
@@ -126,16 +150,49 @@ class FollowerDroneManager(Node):
         except Exception as e: self.get_logger().error(f'Image error: {e}')
 
     def project_global_to_uv(self, target_global):
+        """
+        Global NED 좌표를 카메라 픽셀 좌표로 변환
+
+        좌표계:
+        - NED (North-East-Down): X=North, Y=East, Z=Down
+        - Body FRD (Forward-Right-Down): X=Forward, Y=Right, Z=Down
+        - Camera (ROS/OpenCV): X=Right, Y=Down, Z=Forward
+
+        Returns:
+            tuple: ((u, v), roi_size) 또는 None
+        """
+        # 1. Global → Body-relative (드론 위치 기준 상대 좌표)
         dx, dy, dz = target_global - self.drone_pos
-        cy, sy = np.cos(self.drone_yaw), np.sin(self.drone_yaw)
-        Xb = dx * cy + dy * sy
-        Yb = -dx * sy + dy * cy
-        Zb = dz
-        Xc, Yc, Zc = Yb, Zb, Xb # Body to Camera (Forward-looking)
-        if Zc <= 0: return None
+
+        # 2. NED → Body FRD (yaw 회전)
+        # Rotation matrix for yaw (counterclockwise around Z-down axis)
+        cos_yaw, sin_yaw = np.cos(self.drone_yaw), np.sin(self.drone_yaw)
+        Xb = dx * cos_yaw + dy * sin_yaw   # Forward
+        Yb = -dx * sin_yaw + dy * cos_yaw  # Right
+        Zb = dz                             # Down
+
+        # 3. Body FRD → Camera (X=Right, Y=Down, Z=Forward)
+        # Forward-looking camera mounted on drone body
+        Xc = Yb   # Body Right → Camera Right (X)
+        Yc = Zb   # Body Down → Camera Down (Y)
+        Zc = Xb   # Body Forward → Camera Forward (Z/depth)
+
+        # 4. 타겟이 카메라 앞에 있는지 확인
+        if Zc <= 0.1:  # 최소 10cm 앞에 있어야 함
+            return None
+
+        # 5. Pinhole projection (3D → 2D)
         u = self.K[0, 0] * (Xc / Zc) + self.K[0, 2]
         v = self.K[1, 1] * (Yc / Zc) + self.K[1, 2]
-        return (u, v)
+
+        # 6. 동적 ROI 크기 계산 (거리 기반)
+        # 타겟의 실제 크기가 이미지에서 몇 픽셀로 보이는지 계산
+        # projected_size = (physical_size * focal_length) / distance
+        roi_size_pixels = (self.target_physical_size * self.K[0, 0]) / Zc
+        roi_size_with_offset = int(roi_size_pixels * self.roi_offset_ratio)
+        roi_size_with_offset = max(30, min(roi_size_with_offset, 200))  # 30~200 픽셀 범위
+
+        return ((u, v), roi_size_with_offset)
 
     def visualize_reprojection(self):
         if self.current_image is None: return
@@ -143,11 +200,22 @@ class FollowerDroneManager(Node):
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             self.window_created = True
         disp = self.current_image.copy()
+        h = disp.shape[0]
+
         if self.predicted_uv:
             u, v = map(int, self.predicted_uv)
+            half_roi = self.predicted_roi_size // 2
+
             if 0 <= u < self.img_width and 0 <= v < self.img_height:
-                cv2.rectangle(disp, (u-25, v-25), (u+25, v+25), (0, 255, 0), 2)
+                # 동적 ROI 크기로 사각형 그리기
+                cv2.rectangle(disp, (u - half_roi, v - half_roi),
+                             (u + half_roi, v + half_roi), (0, 255, 0), 2)
                 cv2.drawMarker(disp, (u, v), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
+
+            # 하단 정보 표시
+            info_text = f'(x={u}, y={v}) ~ R:255 G:255 B:255'
+            cv2.putText(disp, info_text, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
         cv2.imshow(self.window_name, disp)
         cv2.waitKey(1)
 

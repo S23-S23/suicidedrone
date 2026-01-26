@@ -25,9 +25,11 @@ class GCSStation(Node):
         self.declare_parameter('target_position_topic', '/balloon_target_position')
         self.declare_parameter('monitoring_topic', '/drone1/fmu/out/monitoring')
         self.declare_parameter('display_fps', 5)
-        self.declare_parameter('focal_length', 544.6)
-        self.declare_parameter('cx', 424.0)
-        self.declare_parameter('cy', 240.0)
+        # Depth Camera (Gazebo): 1280x720, HFOV=1.5009831567 rad (~86°)
+        # fx = width / (2 * tan(HFOV/2)) = 1280 / (2 * tan(0.75049)) ≈ 705.5
+        self.declare_parameter('focal_length', 705.5)
+        self.declare_parameter('cx', 640.0)
+        self.declare_parameter('cy', 360.0)
 
         self.system_id = self.get_parameter('system_id').value
         self.fx = self.get_parameter('focal_length').value
