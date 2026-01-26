@@ -5,3 +5,10 @@ log/
 .vscode/
 *.pyc
 __pycache__/
+
+**/balloon_hunter/balloon_detector.py
+**/balloon_hunter/position_estimator.py
+**/balloon_hunter/collision_handler.py
+**/balloon_hunter/csv_logger.py
+**/balloon_hunter/plot_from_csv.py
+**/__pycache__/
