@@ -2,7 +2,9 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
-from px4_msgs.msg import VehicleCommand, OffboardControlMode, TrajectorySetpoint, Monitoring
+from px4_msgs.msg import VehicleOdometry, OffboardControlMode, TrajectorySetpoint, Monitoring
+
+from geometry_msgs.msg import PointStamped
 
 from follower_drone.takeoff_mission import TakeoffMission
 from follower_drone.formation import Formation
@@ -24,11 +26,13 @@ class DroneManager(Node):
 
         self.monitoring_msg = Monitoring()
         self.leader_monitoring_msg = Monitoring()
+        self.leader_odometry_msg = VehicleOdometry()
         self.formation_radian = math.radians(self.formation_degree/2.0)
 
         self.mode_handler = ModeHandler(self)
         self.mode_handler.change_mode(Mode.TAKEOFF)
         self.takeoff_mission = None
+        self.takeoff_offset = None
 
         self.ocm_publisher_ = self.create_publisher(
             OffboardControlMode,
@@ -36,6 +40,11 @@ class DroneManager(Node):
         self.traj_setpoint_publisher_ = self.create_publisher(
             TrajectorySetpoint,
             f'/drone{self.system_id}/fmu/in/trajectory_setpoint',
+            qos_profile_sensor_data
+        )
+        self.diff_distance_publisher_ = self.create_publisher(
+            PointStamped,
+            f'/drone{self.system_id}/follower_drone/diff_distance',
             qos_profile_sensor_data
         )
 
@@ -52,17 +61,22 @@ class DroneManager(Node):
             self.leader_monitoring_callback,
             qos_profile_sensor_data
         )
+        self.leader_odometry_subscriber_ = self.create_subscription(
+            VehicleOdometry,
+            f'/drone1/fmu/out/vehicle_odometry',
+            self.leader_odometry_callback,
+            qos_profile_sensor_data
+        )
 
         self.timer_mission_ = self.create_timer(0.05, self.timer_mission_callback)
         self.timer_ocm_ = self.create_timer(0.1, self.timer_ocm_callback)
 
         self.get_logger().info(f'drone_manager_{self.system_id} initialized complete.')
 
-
     def timer_ocm_callback(self):
         ocm_msg = OffboardControlMode()
         ocm_msg.position = True
-        ocm_msg.velocity = False
+        ocm_msg.velocity = True
         ocm_msg.acceleration = False
         ocm_msg.attitude = False
         ocm_msg.body_rate = False
@@ -76,24 +90,34 @@ class DroneManager(Node):
                 self.takeoff_mission = TakeoffMission(self, self.system_id, 2.0) # Takeoff to 2.0 meters
         if self.mode_handler.is_in_mode(Mode.FORMATION):
             self.handle_formation()
+            diff_distance_msg = PointStamped()
+            diff_distance_msg.header.stamp = self.get_clock().now().to_msg()
+            posDiff = [self.leader_monitoring_msg.pos_x-self.monitoring_msg.pos_x - self.takeoff_offset[0], self.leader_monitoring_msg.pos_y-self.monitoring_msg.pos_y - self.takeoff_offset[1], self.leader_monitoring_msg.pos_z-self.monitoring_msg.pos_z]
+            distance = math.sqrt(posDiff[0]**2 + posDiff[1]**2)
+            diff_distance_msg.point.x = distance
+            self.diff_distance_publisher_.publish(diff_distance_msg)
 
     def handle_formation(self):
-        takeoff_offset = LLH2NED([self.leader_monitoring_msg.ref_lat, self.leader_monitoring_msg.ref_lon, self.leader_monitoring_msg.ref_alt],
+        self.takeoff_offset = LLH2NED([self.leader_monitoring_msg.ref_lat, self.leader_monitoring_msg.ref_lon, self.leader_monitoring_msg.ref_alt],
                                  [self.monitoring_msg.ref_lat, self.monitoring_msg.ref_lon, self.monitoring_msg.ref_alt])
         self.formation = Formation(
             self,
             self.system_id,
             self.formation_distance,
             self.formation_radian,
-            takeoff_offset
+            self.takeoff_offset
             )
         setpoint = TrajectorySetpoint()
         setpoint.position = self.formation.calculate_position()
         setpoint.yaw = self.formation.calculate_yaw()
+        setpoint.velocity = [float(self.leader_odometry_msg.velocity[0]), float(self.leader_odometry_msg.velocity[1]), float(self.leader_odometry_msg.velocity[2])]
         self.traj_setpoint_publisher_.publish(setpoint)
 
     def monitoring_callback(self, msg):
         self.monitoring_msg = msg
+
+    def leader_odometry_callback(self, msg):
+        self.leader_odometry_msg = msg
 
     def leader_monitoring_callback(self, msg):
         self.leader_monitoring_msg = msg
