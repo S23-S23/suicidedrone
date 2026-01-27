@@ -13,10 +13,6 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'worlds'), glob('worlds/*.world')),
-        # iris 어안렌즈 모델
-        (os.path.join('share', package_name, 'models', 'iris_fisheye_lens_camera'),
-            glob('models/iris_fisheye_lens_camera/*.sdf*') + glob('models/iris_fisheye_lens_camera/*.config')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
