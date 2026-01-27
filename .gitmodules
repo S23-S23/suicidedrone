@@ -1,0 +1,3 @@
+[submodule "src/J-Fi/mavlink_vendor/mavlink"]
+	path = src/J-Fi/mavlink_vendor/mavlink
+	url = https://github.com/mavlink/mavlink.git
