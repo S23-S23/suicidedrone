@@ -37,8 +37,8 @@ def launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[
             {"port_name": port_name},
-            {"baud_rate": baud_rate},
-            {"system_id": drone_id},
+            {"baud_rate": int(baud_rate)},
+            {"system_id": int(drone_id)},
         ],
     )
 
@@ -48,13 +48,13 @@ def launch_setup(context, *args, **kwargs):
         name="pos_yaw_receiver_node",
         output="screen",
         parameters=[
-            {"my_system_id": drone_id},
+            {"drone_id": int(drone_id)},
         ],
     )
 
 
     node = [
-        xrce_agent_process,
+        # xrce_agent_process,
         drone_manager_node,
         serial_node,
         receiver_node

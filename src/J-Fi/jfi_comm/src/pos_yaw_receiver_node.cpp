@@ -10,8 +10,8 @@ public:
   PosYawReceiverNode() : Node("pos_yaw_receiver_node")
   {
     // 파라미터 설정 (선택사항)
-    declare_parameter<int>("my_system_id", 2);
-    my_system_id_ = static_cast<uint8_t>(get_parameter("my_system_id").as_int());
+    declare_parameter<int>("drone_id", 2);
+    drone_id_ = static_cast<uint8_t>(get_parameter("drone_id").as_int());
 
     // 1. jfi_comm/out/packet 구독 (시리얼에서 받은 데이터)
     packet_sub_ = this->create_subscription<jfi_comm::msg::SwarmComm>(
@@ -24,7 +24,7 @@ public:
       "/drone1/jfi/out/pos_yaw", rclcpp::SensorDataQoS()
     );
 
-    RCLCPP_INFO(this->get_logger(), "PosYaw Receiver Node started (System ID: %u)", my_system_id_);
+    RCLCPP_INFO(this->get_logger(), "PosYaw Receiver Node started (System ID: %u)", drone_id_);
   }
 
 private:
@@ -54,14 +54,14 @@ private:
         serializer.deserialize_message(&serialized_msg, &pos_yaw);
 
         // Step 2: 수신된 데이터 출력
-        RCLCPP_INFO(this->get_logger(),
+        RCLCPP_INFO_ONCE(this->get_logger(),
           "Received RTK from Drone %u: "
           "Heading=%.2f°, North=%.2f m, East=%.2f m, Down=%.2f m",
           packet->src_sysid,
           pos_yaw.head,
           pos_yaw.rtk_n,
           pos_yaw.rtk_e,
-          pos_yaw.rtk_d
+          pos_yaw.pos_z
         );
 
         // Step 3: 다른 노드에서 사용할 수 있도록 재발행 (선택사항)
@@ -78,7 +78,7 @@ private:
 
   rclcpp::Subscription<jfi_comm::msg::SwarmComm>::SharedPtr packet_sub_;
   rclcpp::Publisher<jfi_comm::msg::PosYaw>::SharedPtr pos_yaw_pub_;
-  uint8_t my_system_id_;
+  uint8_t drone_id_;
 };
 
 int main(int argc, char** argv)

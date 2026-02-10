@@ -37,16 +37,16 @@ bool JFiComm::init(
   receive_callback_ = recv_cb;
   system_id_ = system_id;
   component_id_ = component_id;
-  
+
   bool ret = openPort(port_name, baud_rate);
-  
+
   if(ret) {
     running_ = true;
     mav_recv_thread_ = std::thread(&JFiComm::recvMavLoop, this);
   } else {
     RCLCPP_ERROR(rclcpp::get_logger("JFiComm"), "[init] Failed to open port. Receiver thread not started.");
   }
-  
+
   return ret;
 }
 
@@ -140,7 +140,7 @@ void JFiComm::send(const uint8_t tid, const std::vector<uint8_t>& raw_data)
   } else {
     const size_t header_size = sizeof(JfiFragmentHeader);
     const size_t max_chunk_size = max_payload_size - header_size;
-    
+
     if (max_chunk_size <= 0) {
         RCLCPP_ERROR(rclcpp::get_logger("JFiComm"), "[send] Max payload size is too small for fragmentation header. Dropping.");
         return;
@@ -149,8 +149,8 @@ void JFiComm::send(const uint8_t tid, const std::vector<uint8_t>& raw_data)
     const uint8_t fragment_count = static_cast<uint8_t>(std::ceil(static_cast<double>(raw_data.size()) / max_chunk_size));
     const uint16_t transaction_id = next_transaction_id_++;
 
-    // RCLCPP_INFO(rclcpp::get_logger("JFiComm"), 
-    //     "[send] Fragmenting tid %d (%zu bytes) into %d chunks. Transaction ID: %u", 
+    // RCLCPP_INFO(rclcpp::get_logger("JFiComm"),
+    //     "[send] Fragmenting tid %d (%zu bytes) into %d chunks. Transaction ID: %u",
     //     tid, raw_data.size(), fragment_count, transaction_id);
 
     for (uint8_t i = 0; i < fragment_count; ++i) {
@@ -168,9 +168,9 @@ void JFiComm::send(const uint8_t tid, const std::vector<uint8_t>& raw_data)
 
         std::memcpy(payload.data(), &header, header_size);
         std::memcpy(payload.data() + header_size, raw_data.data() + offset, chunk_size);
-        
+
         send_packet(FRAGMENT_TID, payload);
-        
+
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
   }
@@ -183,21 +183,21 @@ void JFiComm::send_packet(const uint8_t tid, const std::vector<uint8_t>& payload
   jfi_msg.tid = tid;
 
   if (payload.size() > MAVLINK_MSG_JFI_FIELD_DATA_LEN) {
-    RCLCPP_ERROR(rclcpp::get_logger("JFiComm"), 
-      "[send_packet] Payload for tid %d is too large (%zu bytes). Max is %d. Dropping.", 
+    RCLCPP_ERROR(rclcpp::get_logger("JFiComm"),
+      "[send_packet] Payload for tid %d is too large (%zu bytes). Max is %d. Dropping.",
       tid, payload.size(), MAVLINK_MSG_JFI_FIELD_DATA_LEN);
     return;
   }
-  
+
   jfi_msg.len = payload.size();
   std::memset(jfi_msg.data, 0, sizeof(jfi_msg.data));
   std::memcpy(jfi_msg.data, payload.data(), jfi_msg.len);
 
   mavlink_msg_jfi_encode(system_id_, component_id_, &mavlink_msg, &jfi_msg);
-  
+
   uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
   size_t len = mavlink_msg_to_send_buffer(buffer, &mavlink_msg);
-  
+
   writeData(std::vector<uint8_t>(buffer, buffer + len));
 }
 
@@ -219,7 +219,7 @@ void JFiComm::recvMavLoop()
   mavlink_status_t status;
 
   auto last_cleanup_time = std::chrono::steady_clock::now();
-  
+
   while (running_) {
     int local_fd;
     {
@@ -230,7 +230,7 @@ void JFiComm::recvMavLoop()
       }
       local_fd = fd_;
     }
-    
+
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::seconds>(now - last_cleanup_time).count() > 5) {
         cleanup_stale_fragments();
@@ -248,7 +248,7 @@ void JFiComm::recvMavLoop()
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
       continue;
     }
-    
+
     // Process received bytes.
     for (ssize_t i = 0; i < n; ++i) {
       if (mavlink_parse_char(MAVLINK_COMM_0, rx_buffer_[i], &message, &status) == 1) {
@@ -296,7 +296,7 @@ void JFiComm::process_fragment(uint8_t seq, uint8_t src_sysid, const std::vector
         reassembly_buffers_.emplace(header.transaction_id, ReassemblyBuffer(header.original_tid, header.fragment_count));
         it = reassembly_buffers_.find(header.transaction_id);
     }
-    
+
     auto& buffer = it->second;
 
     // Check for inconsistencies
@@ -332,7 +332,7 @@ void JFiComm::process_fragment(uint8_t seq, uint8_t src_sysid, const std::vector
 
     if (received_count == buffer.fragment_count) {
         // RCLCPP_INFO(rclcpp::get_logger("JFiComm"), "[process_fragment] Reassembly complete for transaction %u.", header.transaction_id);
-        
+
         std::vector<uint8_t> reassembled_data;
         reassembled_data.reserve(buffer.total_size);
         for(const auto& chunk : buffer.chunks) {
@@ -342,7 +342,7 @@ void JFiComm::process_fragment(uint8_t seq, uint8_t src_sysid, const std::vector
         if (receive_callback_) {
             receive_callback_(seq, buffer.original_tid, src_sysid, reassembled_data);
         }
-        
+
         reassembly_buffers_.erase(it);
     }
 }

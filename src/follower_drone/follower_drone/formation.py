@@ -24,7 +24,7 @@ class Formation:
         target_x = (x_leader + distance * np.cos(target_radian)) - self.node.monitoring_msg.rtk_n
         target_y = (y_leader + distance * np.sin(target_radian)) - self.node.monitoring_msg.rtk_e
 
-        return [target_x, target_y, self.node.leader_pose_msg.rtk_d]
+        return [target_x, target_y, self.node.leader_pose_msg.pos_z]
 
     def calculate_yaw(self):
         if self.drone_id % 2 == 0:
