@@ -49,7 +49,7 @@ private:
     pos_yaw_msg->head = monitoring_msg->head;
     pos_yaw_msg->rtk_n = monitoring_msg->rtk_n;
     pos_yaw_msg->rtk_e = monitoring_msg->rtk_e;
-    pos_yaw_msg->rtk_d = monitoring_msg->rtk_d;
+    pos_yaw_msg->pos_z = monitoring_msg->pos_z;
     pos_yaw_msg->velocity[0] = velocity_[0];
     pos_yaw_msg->velocity[1] = velocity_[1];
     pos_yaw_msg->velocity[2] = velocity_[2];
@@ -79,7 +79,7 @@ private:
     RCLCPP_DEBUG(this->get_logger(),
       "Sent RTK data: head=%.2f, N=%.2f, E=%.2f, D=%.2f",
       pos_yaw_msg->head, pos_yaw_msg->rtk_n,
-      pos_yaw_msg->rtk_e, pos_yaw_msg->rtk_d);
+      pos_yaw_msg->rtk_e, pos_yaw_msg->pos_z);
   }
 
   rclcpp::Subscription<px4_msgs::msg::Monitoring>::SharedPtr monitoring_sub_;

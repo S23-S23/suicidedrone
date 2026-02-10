@@ -29,7 +29,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {"port_name": port_name},
-            {"baud_rate": baud_rate},
+            {"baud_rate": int(baud_rate)},
             {"system_id": 1},  # 송신 드론은 ID=1 고정
         ],
     )
