@@ -61,7 +61,7 @@
     <!-- EuroPallet Target (rotated 90 degrees, floating in air) -->
     <include>
       <uri>model://europallet</uri>
-      <pose>0 7 3 1.5708 0 0</pose>
+      <pose>1 7 3 1.5708 0 0</pose>
       <name>target_pallet</name>
       <static>true</static>
     </include>

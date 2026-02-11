@@ -165,6 +165,7 @@ class GCSStation(Node):
                 msg.header.frame_id = 'map'
                 msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = ned_pos
                 self.target_pub.publish(msg)
+                self.get_logger().info(f'[Leader] Published Global Target: NED({ned_pos[0]:.2f}, {ned_pos[1]:.2f}, {ned_pos[2]:.2f})')
         else:
             # 추적 실패 시 즉시 중단하여 드론을 FORWARD 상태로 돌림
             self.get_logger().warn('Depth Object Lost: Target out of range')
