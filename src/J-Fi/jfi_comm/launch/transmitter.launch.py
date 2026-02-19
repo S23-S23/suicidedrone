@@ -21,7 +21,7 @@ def generate_launch_description():
         output='screen',
     )
 
-    # 1. 시리얼 통신 노드 (sys_id=1)
+    # 시리얼 통신 노드 (sys_id=1)
     serial_node = Node(
         package="jfi_comm",
         executable="serial_comm_node",
@@ -29,12 +29,12 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {"port_name": port_name},
-            {"baud_rate": int(baud_rate)},
-            {"system_id": 1},  # 송신 드론은 ID=1 고정
+            {"baud_rate": baud_rate},
+            {"system_id": 1},
         ],
     )
 
-    # 2. PX4 데이터 브릿지
+    # PX4 데이터 브릿지
     bridge_node = Node(
         package="jfi_comm",
         executable="monitoring_bridge_node",

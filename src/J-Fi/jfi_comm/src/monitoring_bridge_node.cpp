@@ -13,12 +13,12 @@ public:
     // 1. PX4 Monitoring 토픽 구독
     monitoring_sub_ = this->create_subscription<px4_msgs::msg::Monitoring>(
       "/drone1/fmu/out/monitoring",  // PX4 토픽 이름 (실제 이름 확인 필요)
-      10,
+      rclcpp::SensorDataQoS(),
       std::bind(&MonitoringBridgeNode::monitoring_callback, this, std::placeholders::_1)
     );
     odometry_sub_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
       "/drone1/fmu/out/vehicle_odometry",  // PX4 토픽 이름 (실제 이름 확인 필요)
-      10,
+      rclcpp::SensorDataQoS(),
       std::bind(&MonitoringBridgeNode::odometry_callback, this, std::placeholders::_1)
     );
 
@@ -27,6 +27,7 @@ public:
       "jfi_comm/in/packet", 10
     );
 
+    velocity_.resize(3, 0.0f);
     RCLCPP_INFO(this->get_logger(), "Monitoring Bridge Node started");
   }
 
