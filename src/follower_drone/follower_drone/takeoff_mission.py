@@ -76,7 +76,7 @@ class TakeoffMission():
                 self.currentProgressStatus=ProgressStatus(self.currentProgressStatus.value + 1)
 
         if self.currentProgressStatus == ProgressStatus.TAKEOFF:
-            setpoint=[self.disarmPos[0], self.disarmPos[1], -self.takeoff_altitude]
+            setpoint=[self.disarmPos[0], self.disarmPos[1], self.takeoff_altitude]
             success, distance = self.isOnSetpoint(setpoint)
             if not success:
                 self.setpoint(setpoint)
@@ -85,6 +85,7 @@ class TakeoffMission():
             else:
                 self.currentProgressStatus=ProgressStatus(self.currentProgressStatus.value + 1)
         if self.currentProgressStatus == ProgressStatus.Done:
+            self.node.get_logger().info("Takeoff Mission Complete")
             self.node.mode_handler.change_mode(Mode.FORMATION)
             # print("Current Progress :", self.currentProgressStatus)
             self.node.destroy_timer(self.timer_mission_)

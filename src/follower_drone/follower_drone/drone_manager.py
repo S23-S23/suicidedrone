@@ -28,8 +28,9 @@ class DroneManager(Node):
         self.formation_radian = math.radians(self.formation_degree/2.0)
 
         self.mode_handler = ModeHandler(self)
-        self.mode_handler.change_mode(Mode.TAKEOFF)
+        self.mode_handler.change_mode(Mode.QHAC)
         self.takeoff_mission = None
+        self.formation = None
 
         self.ocm_publisher_ = self.create_publisher(
             OffboardControlMode,
@@ -54,8 +55,8 @@ class DroneManager(Node):
             qos_profile_sensor_data
         )
 
-        self.timer_mission_ = self.create_timer(0.05, self.timer_mission_callback)
-        self.timer_ocm_ = self.create_timer(0.1, self.timer_ocm_callback)
+        self.timer_mission_ = self.create_timer(0.05, self.timer_mission_callback) # 20Hz
+        self.timer_ocm_ = self.create_timer(0.1, self.timer_ocm_callback) # 10Hz
 
         self.get_logger().info(f'drone_manager_{self.system_id} initialized complete.')
 
@@ -70,14 +71,22 @@ class DroneManager(Node):
         self.ocm_publisher_.publish(ocm_msg)
 
     def timer_mission_callback(self):
+        if self.mode_handler.is_in_mode(Mode.QHAC):
+            self.get_logger().warn(f"drone{self.system_id} is waiting for RTK fix. Current RTK N: {self.monitoring_msg.rtk_n}")
+            return
         if self.mode_handler.is_in_mode(Mode.TAKEOFF):
             if self.takeoff_mission is None:
                 self.get_logger().info(f"drone{self.system_id} Takeoff Mission Start")
-                self.takeoff_mission = TakeoffMission(self, self.system_id, 2.0) # Takeoff to 2.0 meters
+                self.takeoff_mission = TakeoffMission(self, self.system_id, self.leader_pose_msg.pos_z) # Takeoff to leader altitude (NED)
         if self.mode_handler.is_in_mode(Mode.FORMATION):
+            if self.formation is None:
+                self.get_logger().info(f"drone{self.system_id} Formation Flight Start")
             self.handle_formation()
 
     def handle_formation(self):
+        if self.leader_pose_msg.rtk_n == 0.0 or self.leader_pose_msg.rtk_n is None:
+            self.get_logger().warn(f"drone 1 is waiting for RTK fix. Current Leader RTK N: {self.leader_pose_msg.rtk_n}")
+            return
         self.formation = Formation(
             self,
             self.system_id,
@@ -92,6 +101,11 @@ class DroneManager(Node):
 
     def monitoring_callback(self, msg):
         self.monitoring_msg = msg
+        if self.mode_handler.is_in_mode(Mode.QHAC):
+            if self.monitoring_msg.ref_lat == 0.0 or self.monitoring_msg.ref_lat is None:
+                return
+            else:
+                self.mode_handler.change_mode(Mode.TAKEOFF)
 
     def leader_pose_callback(self, msg):
         self.leader_pose_msg = msg
