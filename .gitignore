@@ -1,9 +1,7 @@
+.claude*
 build/
 install/
 log/
 .vscode/
 *.pyc
 __pycache__/
-src/.claude
-.claude
-/.claude

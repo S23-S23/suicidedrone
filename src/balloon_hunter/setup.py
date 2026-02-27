@@ -24,6 +24,14 @@ setup(
         (os.path.join('share', package_name, 'models', 'typhoon_h480', 'meshes'), 
             glob('models/typhoon_h480/meshes/*.stl')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml') if os.path.exists('config') else []),
+        # iris 모델 추가
+        (os.path.join('share', package_name, 'models', 'iris'),
+            glob('models/iris/*.sdf*') + glob('models/iris/*.config')),
+        (os.path.join('share', package_name, 'models', 'iris', 'meshes'),
+            glob('models/iris/meshes/*')),
+        # iris_depth_camera 모델 추가 (Jinja 템플릿 포함)
+        (os.path.join('share', package_name, 'models', 'iris_depth_camera'),
+            glob('models/iris_depth_camera/*.sdf*') + glob('models/iris_depth_camera/*.config') + glob('models/iris_depth_camera/*.jinja')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
