@@ -162,6 +162,18 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'collision_distance': 0.5, 'drone_id': drone_id}]
     )
 
+    target_mover = Node(
+    package='balloon_hunter',
+    executable='target_mover',
+    name='target_mover',
+    parameters=[{
+        'moving_target': LaunchConfiguration('moving_target'),
+        'move_speed': LaunchConfiguration('target_speed'),
+        'move_interval': LaunchConfiguration('target_interval'),
+        'target_name': 'target_balloon' # world 파일의 name과 일치
+    }]
+    )
+
     # Event chaining
     start_spawn_drone1 = TimerAction(period=2.0, actions=[spawn_drone1])
 
@@ -175,7 +187,8 @@ def launch_setup(context, *args, **kwargs):
             TimerAction(period=10.0, actions=[
                 balloon_detector,
                 drone_manager,
-                collision_handler
+                collision_handler,
+                target_mover
             ])
         ])
     )
@@ -194,5 +207,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
         DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt'),
+        DeclareLaunchArgument('moving_target', default_value='true'),
+        DeclareLaunchArgument('target_speed', default_value='0.5'),
+        DeclareLaunchArgument('target_interval', default_value='2.0'),
         OpaqueFunction(function=launch_setup)
     ])
