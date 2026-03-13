@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Launch file for IBVS + PNG balloon interception.
-Replaces: position_estimator + drone_manager with single ibvs_png_controll3r node.
-Keeps: balloon_detector (YOLO) as-is.
+Launch file for IBVS + PNG balloon interception with DKF/EKF selection.
 
 Usage:
-  ros2 launch balloon_hunter balloon_hunt_ibvs.launch.py
+  ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py filter_type:=DKF
+  ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py filter_type:=EKF
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -26,6 +25,7 @@ def launch_setup(context, *args, **kwargs):
     px4_src_path = LaunchConfiguration('px4_src_path').perform(context)
     gazebo_classic_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic'
     model_path = LaunchConfiguration('model_path').perform(context)
+    filter_type = LaunchConfiguration('filter_type').perform(context)
     drone_id = 1
 
     # Environment
@@ -102,7 +102,6 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # ── Mission nodes ──
-    # YOLO detector (unchanged)
     balloon_detector = Node(
         package='balloon_hunter',
         executable='balloon_detector',
@@ -117,7 +116,7 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # NEW: IBVS + PNG controller (replaces position_estimator + drone_manager)
+    # Controller with filter_type from launch argument
     drone_manager = Node(
         package='balloon_hunter',
         executable='drone_manager',
@@ -125,8 +124,8 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
+            'filter_type': filter_type,           # ← DKF or EKF
             'takeoff_height': 6.0,
-            # Camera intrinsics
             'img_width': 848,
             'img_height': 480,
             'fx': 454.8,
@@ -134,21 +133,38 @@ def launch_setup(context, *args, **kwargs):
             'cx': 424.0,
             'cy': 240.0,
             'cam_pitch_deg': 0.0,
-            # PNG parameters (paper defaults)
             'K_y': 3.0,
             'K_z': 3.0,
             'k_a': 2.0,
-            # Yaw PD (paper defaults)
             'kp_yaw': 0.03,
             'kd_yaw': 0.01,
-            # Speed
             'max_speed': 10.0,
             'search_speed': 3.0,
             'collision_distance': 0.5,
-            # DKF
             'dkf_dt': 0.02,
             'dkf_delay_steps': 3,
-            # Topics
+            'detection_topic': f'/Yolov8_Inference_{drone_id}',
+            'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
+        }]
+    )
+
+    # Logger with filter_type for CSV filename
+    logger = Node(
+        package='balloon_hunter',
+        executable='logger',
+        name='logger',
+        output='screen',
+        parameters=[{
+            'filter_type': filter_type,           # ← DKF or EKF
+            'system_id': drone_id,
+            'target_gazebo_x': 7.0,
+            'target_gazebo_y': 10.0,
+            'target_gazebo_z': 2.0,
+            'fx': 454.8,
+            'fy': 454.8,
+            'cx': 424.0,
+            'cy': 240.0,
+            'cam_pitch_deg': 0.0,
             'detection_topic': f'/Yolov8_Inference_{drone_id}',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
         }]
@@ -163,15 +179,15 @@ def launch_setup(context, *args, **kwargs):
     )
 
     target_mover = Node(
-    package='balloon_hunter',
-    executable='target_mover',
-    name='target_mover',
-    parameters=[{
-        'moving_target': LaunchConfiguration('moving_target'),
-        'move_speed': LaunchConfiguration('target_speed'),
-        'move_interval': LaunchConfiguration('target_interval'),
-        'target_name': 'target_balloon' # world 파일의 name과 일치
-    }]
+        package='balloon_hunter',
+        executable='target_mover',
+        name='target_mover',
+        parameters=[{
+            'moving_target': LaunchConfiguration('moving_target'),
+            'move_speed': LaunchConfiguration('target_speed'),
+            'move_interval': LaunchConfiguration('target_interval'),
+            'target_name': 'target_balloon'
+        }]
     )
 
     # Event chaining
@@ -187,8 +203,7 @@ def launch_setup(context, *args, **kwargs):
             TimerAction(period=10.0, actions=[
                 balloon_detector,
                 drone_manager,
-                collision_handler,
-                target_mover
+                logger,
             ])
         ])
     )
@@ -207,6 +222,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
         DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt'),
+        DeclareLaunchArgument('filter_type', default_value='DKF'),
         DeclareLaunchArgument('moving_target', default_value='true'),
         DeclareLaunchArgument('target_speed', default_value='0.5'),
         DeclareLaunchArgument('target_interval', default_value='2.0'),
