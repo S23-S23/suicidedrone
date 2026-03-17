@@ -43,7 +43,8 @@ class BalloonDetector(Node):
         if torch.cuda.is_available():
             self.device = 'cuda:0'
             self.model.to('cuda:0')
-            self.get_logger().info('Using GPU (CUDA)')
+            self.model.half()  # FP16 for faster GPU inference
+            self.get_logger().info('Using GPU (CUDA, FP16)')
         else:
             self.device = 'cpu'
             self.get_logger().info('Using CPU (GPU not available)')
@@ -66,11 +67,11 @@ class BalloonDetector(Node):
 
         self.get_logger().info(f'Target class: {self.target_class}, ID: {self.target_cls_id}, conf={self.conf}')
 
-        # QoS Profile
+        # QoS Profile — depth=1: always process latest frame, drop stale queue
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=1
         )
 
         # Subscriber
@@ -109,7 +110,9 @@ class BalloonDetector(Node):
                 source=cv_image,
                 conf=self.conf,
                 device=self.device,
-                verbose=False
+                verbose=False,
+                half=(self.device != 'cpu'),
+                imgsz=(480, 864),  # nearest multiple of 32 >= 848
             )
 
             # Process results

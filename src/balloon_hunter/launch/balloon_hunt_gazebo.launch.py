@@ -32,8 +32,9 @@ def launch_setup(context, *args, **kwargs):
     resource_path_env = SetEnvironmentVariable('GAZEBO_RESOURCE_PATH', '/usr/share/gazebo-11')
     model_path_env = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
+        f'{current_package_path}/models:'  # local models take priority
         f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:'
-        f'{current_package_path}/models:{gazebo_classic_path}/models'
+        f'{gazebo_classic_path}/models'
     )
     plugin_path_env = SetEnvironmentVariable(
         'GAZEBO_PLUGIN_PATH',
