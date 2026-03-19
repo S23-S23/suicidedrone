@@ -127,23 +127,15 @@ def launch_setup(context, *args, **kwargs):
             'system_id': drone_id,
             'filter_type': filter_type,           # ← DKF or EKF
             'takeoff_height': 6.0,
-            'img_width': 848,
-            'img_height': 480,
             'fx': 454.8,
             'fy': 454.8,
             'cx': 424.0,
             'cy': 240.0,
             'cam_pitch_deg': 0.0,
-            'K_y': 3.0,
-            'K_z': 3.0,
-            'k_a': 2.0,
-            'kp_yaw': 0.03,
-            'kd_yaw': 0.01,
-            'max_speed': 10.0,
-            'search_speed': 3.0,
-            'collision_distance': 0.5,
+            'kp_yaw': 0.20,           # max ~10 rad/s @ 50Hz
+            'kd_yaw': 0.0003,
             'dkf_dt': 0.02,
-            'dkf_delay_steps': 3,
+            'dkf_delay_steps': 10,    # 200ms / 20ms = 10 steps
             'detection_topic': f'/Yolov8_Inference_{drone_id}',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
         }]
@@ -158,9 +150,9 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'filter_type': filter_type,           # ← DKF or EKF
             'system_id': drone_id,
-            'target_gazebo_x': 7.0,
-            'target_gazebo_y': 10.0,
-            'target_gazebo_z': 2.0,
+            'target_gazebo_x':  0.0,   # fallback static GT (overridden by /target_world_pos)
+            'target_gazebo_y':  5.0,
+            'target_gazebo_z':  2.0,
             'fx': 454.8,
             'fy': 454.8,
             'cx': 424.0,
@@ -183,11 +175,14 @@ def launch_setup(context, *args, **kwargs):
         package='balloon_hunter',
         executable='target_mover',
         name='target_mover',
+        output='screen',
         parameters=[{
-            'moving_target': LaunchConfiguration('moving_target'),
-            'move_speed': LaunchConfiguration('target_speed'),
-            'move_interval': LaunchConfiguration('target_interval'),
-            'target_name': 'target_balloon'
+            'target_name': 'target_balloon',
+            'nominal_x':    0.0,    # Gazebo X (NED North)
+            'nominal_y':    5.0,    # Gazebo Y (depth, fixed)
+            'nominal_z':    5.0,    # Gazebo Z (height, fixed)
+            'amplitude':    3.0,    # ±4m constant-velocity swing in Gazebo X
+            'speed':        2.0,    # m/s constant speed
         }]
     )
 
@@ -202,6 +197,7 @@ def launch_setup(context, *args, **kwargs):
     mission_nodes_event = RegisterEventHandler(
         OnProcessExit(target_action=spawn_drone1, on_exit=[
             TimerAction(period=10.0, actions=[
+                target_mover,
                 balloon_detector,
                 drone_manager,
                 logger,
@@ -224,8 +220,5 @@ def generate_launch_description():
         DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
         DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt'),
         DeclareLaunchArgument('filter_type', default_value='DKF'),
-        DeclareLaunchArgument('moving_target', default_value='true'),
-        DeclareLaunchArgument('target_speed', default_value='0.5'),
-        DeclareLaunchArgument('target_interval', default_value='2.0'),
         OpaqueFunction(function=launch_setup)
     ])

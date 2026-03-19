@@ -38,6 +38,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from px4_msgs.msg import Monitoring, VehicleLocalPosition, VehicleAngularVelocity
 from yolov8_msgs.msg import Yolov8Inference
 from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import Point
 
 
 def rot_x(a):
@@ -73,7 +74,7 @@ class FilterLogger(Node):
         gz_x = self.get_parameter('target_gazebo_x').value
         gz_y = self.get_parameter('target_gazebo_y').value
         gz_z = self.get_parameter('target_gazebo_z').value
-        self.target_ned = np.array([gz_x, gz_y, -gz_z])
+        self.target_ned = np.array([gz_x, gz_y, -gz_z])   # updated by /target_world_pos
         self.fx = self.get_parameter('fx').value
         self.fy = self.get_parameter('fy').value
         self.cx = self.get_parameter('cx').value
@@ -137,6 +138,9 @@ class FilterLogger(Node):
         # Subscribe to controller's filter estimate
         self.create_subscription(Float32MultiArray, '/filter_estimate', self.filt_est_cb, 10)
 
+        # Subscribe to moving target position (from target_mover)
+        self.create_subscription(Point, '/target_world_pos', self._target_pos_cb, 10)
+
         # Timer 50Hz
         self.create_timer(0.02, self.log_cb)
 
@@ -173,6 +177,10 @@ class FilterLogger(Node):
         if self.yolo_first_t is None:
             self.yolo_first_t = now
         self.yolo_count += 1
+
+    def _target_pos_cb(self, msg: Point):
+        """Update target NED position from moving target (Gazebo frame → NED)."""
+        self.target_ned = np.array([msg.x, msg.y, -msg.z])
 
     def filt_est_cb(self, msg: Float32MultiArray):
         """Receive actual filter estimate from controller."""

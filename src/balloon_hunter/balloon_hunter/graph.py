@@ -66,34 +66,71 @@ def smart_ylim(ax, data_list, margin=0.1):
     ax.set_ylim(lo - rng * margin, hi + rng * margin)
 
 
+def graph0_target_tracking(dkf, ekf, out):
+    """Target trajectory: GT (sinusoidal) vs DKF vs EKF filter estimates."""
+    fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+
+    # Top: both filter estimates on same axes
+    ax = axes[0]
+    ax.set_title('Target Trajectory: DKF vs EKF Filter Estimates', fontsize=13)
+    ax.plot(dkf['timestamp_s'].values, dkf['u_filt'].values,
+            linewidth=1.2, color='#2980b9', alpha=0.85, label='DKF estimate')
+    ax.plot(ekf['timestamp_s'].values, ekf['u_filt'].values,
+            linewidth=1.2, color='#e74c3c', alpha=0.85, label='EKF estimate', linestyle='--')
+    ax.axhline(y=424, color='orange', linestyle=':', alpha=0.5, label='Image center')
+    ax.set_ylabel('u (pixels)')
+    ax.legend(loc='upper right', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    smart_ylim(ax, [dkf['u_filt'].values, ekf['u_filt'].values])
+
+    # Bottom: per-filter tracking error
+    ax = axes[1]
+    ax.set_title('Tracking Error: |u_filt − u_gt|', fontsize=13)
+    ax.plot(dkf['timestamp_s'].values, dkf['err_filt_px'].values,
+            linewidth=0.9, color='#2980b9', alpha=0.7, label='DKF error')
+    ax.plot(ekf['timestamp_s'].values, ekf['err_filt_px'].values,
+            linewidth=0.9, color='#e74c3c', alpha=0.7, label='EKF error')
+    ax.set_ylabel('Error (pixels)')
+    ax.set_xlabel('Time (s)')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(bottom=0)
+    smart_ylim(ax, [dkf['err_filt_px'].values, ekf['err_filt_px'].values])
+    yl = ax.get_ylim()
+    ax.set_ylim(0, yl[1])
+
+    plt.tight_layout()
+    plt.savefig(out, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f'  -> {out}')
+
+
 def graph1_coordinates(dkf, ekf, out):
-    """Image coordinate (u-axis) time series comparison."""
+    """Image coordinate (u-axis) time series comparison, per filter."""
     fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
     # DKF
     ax = axes[0]
     ax.set_title('DKF Experiment: Image Coordinate (u-axis)', fontsize=13)
-    ax.scatter(dkf['timestamp_s'].values, dkf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='YOLO raw')
-    ax.plot(dkf['timestamp_s'].values, dkf['u_gt'].values, linewidth=1.5, color='#2ecc71', linestyle='--', label='Ground Truth')
+    ax.scatter(dkf['timestamp_s'].values, dkf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='OpenCV raw')
     ax.plot(dkf['timestamp_s'].values, dkf['u_filt'].values, linewidth=1.2, color='#2980b9', label='DKF estimate')
     ax.axhline(y=424, color='orange', linestyle=':', alpha=0.5, label='Image center')
     ax.set_ylabel('u (pixels)')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
-    smart_ylim(ax, [dkf['u_yolo'].values, dkf['u_gt'].values, dkf['u_filt'].values])
+    smart_ylim(ax, [dkf['u_yolo'].values, dkf['u_filt'].values])
 
     # EKF
     ax = axes[1]
     ax.set_title('EKF Experiment: Image Coordinate (u-axis)', fontsize=13)
-    ax.scatter(ekf['timestamp_s'].values, ekf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='YOLO raw')
-    ax.plot(ekf['timestamp_s'].values, ekf['u_gt'].values, linewidth=1.5, color='#2ecc71', linestyle='--', label='Ground Truth')
+    ax.scatter(ekf['timestamp_s'].values, ekf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='OpenCV raw')
     ax.plot(ekf['timestamp_s'].values, ekf['u_filt'].values, linewidth=1.2, color='#e74c3c', label='EKF estimate')
     ax.axhline(y=424, color='orange', linestyle=':', alpha=0.5, label='Image center')
     ax.set_ylabel('u (pixels)')
     ax.set_xlabel('Time (s)')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
-    smart_ylim(ax, [ekf['u_yolo'].values, ekf['u_gt'].values, ekf['u_filt'].values])
+    smart_ylim(ax, [ekf['u_yolo'].values, ekf['u_filt'].values])
 
     plt.tight_layout()
     plt.savefig(out, dpi=150, bbox_inches='tight')
@@ -281,6 +318,7 @@ def main():
     base = 'comparison'
 
     print('\nGenerating graphs...')
+    graph0_target_tracking(dkf, ekf, os.path.join(out_dir, f'{base}_0_tracking.png'))
     graph1_coordinates(dkf, ekf, os.path.join(out_dir, f'{base}_1_coordinates.png'))
     graph2_error(dkf, ekf, os.path.join(out_dir, f'{base}_2_error.png'))
     graph3_control(dkf, ekf, os.path.join(out_dir, f'{base}_3_control.png'))

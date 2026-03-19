@@ -1,75 +1,126 @@
+#!/usr/bin/env python3
+"""
+Target Mover — constant-velocity left-right motion for DKF vs EKF comparison
+==============================================================================
+Moves 'target_balloon' in Gazebo X at constant speed, reversing direction
+at ±amplitude. This creates a triangle-wave trajectory:
+
+    speed = 2.0 m/s (constant)
+    range = nominal_x ± amplitude
+
+Updated at 50 Hz for smooth, continuous motion.
+Motion is deterministic (same speed, same start direction every run).
+
+Publishes current world position on /target_world_pos for logger GT.
+"""
+
 import rclpy
 from rclpy.node import Node
 from gazebo_msgs.srv import SetEntityState
-from geometry_msgs.msg import Pose
-import random
-import math
+from geometry_msgs.msg import Point
+
 
 class TargetMover(Node):
     def __init__(self):
         super().__init__('target_mover')
-        
-        # 파라미터 선언
-        self.declare_parameter('moving_target', False)
-        self.declare_parameter('target_name', 'target_balloon')
-        self.declare_parameter('move_speed', 0.5)      # m/s
-        self.declare_parameter('move_interval', 2.0)   # 방향 전환 간격 (초)
 
-        self.moving = self.get_parameter('moving_target').value
+        self.declare_parameter('target_name',  'target_balloon')
+        self.declare_parameter('nominal_x',     0.0)   # Gazebo X centre
+        self.declare_parameter('nominal_y',     5.0)   # Gazebo Y (depth, fixed)
+        self.declare_parameter('nominal_z',     5.0)   # Gazebo Z (height, fixed)
+        self.declare_parameter('amplitude',     4.0)   # ±4 m range in Gazebo X
+        self.declare_parameter('speed',         2.0)   # m/s constant speed
+
         self.target_name = self.get_parameter('target_name').value
-        self.speed = self.get_parameter('move_speed').value
-        self.interval = self.get_parameter('move_interval').value
+        self.nominal_x   = self.get_parameter('nominal_x').value
+        self.nominal_y   = self.get_parameter('nominal_y').value
+        self.nominal_z   = self.get_parameter('nominal_z').value
+        self.amplitude   = self.get_parameter('amplitude').value
+        self.speed       = self.get_parameter('speed').value
 
-        if not self.moving:
-            self.get_logger().info('Moving target is disabled. Node exiting...')
+        # State: current offset from nominal_x and direction
+        self._offset = 0.0        # current X offset from nominal
+        self._direction = 1.0     # +1 = moving in +X, -1 = moving in -X
+        self._dt = 0.02           # 50 Hz
+
+        # Gazebo service — try both ROS2 and ROS1-style names
+        self._cli = None
+        for svc_name in ['/set_entity_state', '/gazebo/set_entity_state']:
+            cli = self.create_client(SetEntityState, svc_name)
+            if cli.wait_for_service(timeout_sec=5.0):
+                self._cli = cli
+                self.get_logger().info(f'Connected to Gazebo service: {svc_name}')
+                break
+            else:
+                self.get_logger().warn(f'Service {svc_name} not available, trying next…')
+                self.destroy_client(cli)
+
+        if self._cli is None:
+            self.get_logger().error(
+                'No set_entity_state service found! '
+                'Make sure libgazebo_ros_state.so is loaded in the world file.'
+            )
             return
 
-        # Gazebo 서비스 클라이언트 (Gazebo Classic 기준)
-        self.client = self.create_client(SetEntityState, '/gazebo/set_entity_state')
-        while not self.client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for /gazebo/set_entity_state service...')
+        # Position publisher for logger GT computation
+        self._pos_pub = self.create_publisher(Point, '/target_world_pos', 10)
 
-        # 초기 위치 설정 (world 파일 기준: 3, 10, 2)
-        self.current_pos = [3.0, 10.0, 2.0]
-        self.velocity = [0.0, 0.0, 0.0]
+        # 50 Hz timer — every step moves exactly speed * dt = constant distance
+        self.create_timer(self._dt, self._update)
 
-        # 타이머 설정
-        self.create_timer(self.interval, self.update_direction)
-        self.create_timer(0.05, self.update_position) # 20Hz로 위치 업데이트
+        half_period = 2.0 * self.amplitude / self.speed
+        self.get_logger().info(
+            f'TargetMover started | centre=({self.nominal_x},{self.nominal_y},{self.nominal_z}) '
+            f'| range=±{self.amplitude}m | speed={self.speed}m/s | half-period={half_period:.1f}s'
+        )
 
-    def update_direction(self):
-        # 상하좌우(X, Y, Z) 랜덤 방향 벡터 생성
-        theta = random.uniform(0, 2 * math.pi)
-        phi = random.uniform(0, math.pi)
-        
-        self.velocity[0] = self.speed * math.sin(phi) * math.cos(theta)
-        self.velocity[1] = self.speed * math.sin(phi) * math.sin(theta)
-        self.velocity[2] = self.speed * math.cos(phi) * 0.5 # 수직 이동은 조금 작게
+    def _update(self):
+        if self._cli is None:
+            return
 
-    def update_position(self):
-        # 위치 계산 (v * dt)
-        self.current_pos[0] += self.velocity[0] * 0.05
-        self.current_pos[1] += self.velocity[1] * 0.05
-        self.current_pos[2] += self.velocity[2] * 0.05
-        
-        # Z축 최소 높이 제한 (바닥 뚫기 방지)
-        self.current_pos[2] = max(0.5, self.current_pos[2])
+        # Constant velocity step
+        self._offset += self._direction * self.speed * self._dt
 
-        # Gazebo에 적용
-        request = SetEntityState.Request()
-        request.state.name = self.target_name
-        request.state.pose.position.x = self.current_pos[0]
-        request.state.pose.position.y = self.current_pos[1]
-        request.state.pose.position.z = self.current_pos[2]
-        
-        self.client.call_async(request)
+        # Reverse at boundaries
+        if self._offset >= self.amplitude:
+            self._offset = self.amplitude
+            self._direction = -1.0
+        elif self._offset <= -self.amplitude:
+            self._offset = -self.amplitude
+            self._direction = 1.0
+
+        x = self.nominal_x + self._offset
+        y = self.nominal_y
+        z = self.nominal_z
+
+        # Move balloon in Gazebo
+        req = SetEntityState.Request()
+        req.state.name = self.target_name
+        req.state.pose.position.x = x
+        req.state.pose.position.y = y
+        req.state.pose.position.z = z
+        req.state.reference_frame = 'world'
+        self._cli.call_async(req)
+
+        # Publish for logger
+        pt = Point()
+        pt.x = x
+        pt.y = y
+        pt.z = z
+        self._pos_pub.publish(pt)
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = TargetMover()
-    if node.moving:
+    try:
         rclpy.spin(node)
-    rclpy.shutdown()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

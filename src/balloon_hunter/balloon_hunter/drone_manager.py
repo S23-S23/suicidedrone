@@ -19,6 +19,9 @@ Usage:
 """
 
 import math
+import os
+import signal
+import time
 import collections
 import numpy as np
 import rclpy
@@ -78,7 +81,7 @@ class DelayedKalmanFilter:
         dt = self.dt
         wc = self.R_c_b @ omega_body
         vc = self.R_c_b @ (R_e_b.T @ vel_ned)
-        pz = 15.0
+        pz = 5.0
         wxc, wyc, wzc = wc
         vxc, vyc, vzc = vc
         dp_rot = np.array([
@@ -94,15 +97,13 @@ class DelayedKalmanFilter:
     def _build_F(self, px, py, wc, vzc, pz):
         dt = self.dt
         wxc, wyc, wzc_val = wc
-        # position의 jacobian 선형화
         F_pp = np.eye(2) + np.array([
             [vzc / pz + py * wxc - 2 * px * wyc, px * wxc + wzc_val],
             [-py * wyc - wzc_val, vzc / pz + 2 * py * wxc - px * wyc]
         ]) * dt
         F = np.eye(4)
         F[0:2, 0:2] = F_pp
-        # ★ 수정: F[0:2, 2:4] = 0 (velocity로부터의 중복 기여 제거)
-        # velocity 상태는 predict에서 변화 없음 (Q noise만 가함)
+        F[0:2, 2:4] = np.eye(2) * dt
         return F
 
     def predict(self, omega_body, vel_ned, R_e_b):
@@ -117,10 +118,8 @@ class DelayedKalmanFilter:
             'w': omega_body.copy(), 'v': vel_ned.copy(), 'R': R_e_b.copy(),
         })
 
-        # ★ 수정: dp만 더함. x[2]*dt 중복 제거
-        self.x[0] += dp[0]
-        self.x[1] += dp[1]
-        # x[2], x[3]은 predict에서 변화 없음
+        self.x[0] += dp[0] + self.x[2] * self.dt
+        self.x[1] += dp[1] + self.x[3] * self.dt
         self.P = F @ self.P @ F.T + self.Q
 
         self.x[0] = np.clip(self.x[0], -3.0, 3.0)
@@ -155,9 +154,8 @@ class DelayedKalmanFilter:
             h = self.history[i]
             dp, wc, vzc, pz = self._imu_image_motion(xc[0], xc[1], h['w'], h['v'], h['R'])
             F = self._build_F(xc[0], xc[1], wc, vzc, pz)
-            # ★ 수정: dp만 더함
-            xc[0] += dp[0]
-            xc[1] += dp[1]
+            xc[0] += dp[0] + xc[2] * self.dt
+            xc[1] += dp[1] + xc[3] * self.dt
             Pc = F @ Pc @ F.T + self.Q
 
         self.x, self.P = xc, Pc
@@ -201,7 +199,7 @@ class SimpleEKF:
         dt = self.dt
         wc = self.R_c_b @ omega_body
         vc = self.R_c_b @ (R_e_b.T @ vel_ned)
-        pz = 15.0
+        pz = 5.0
         wxc, wyc, wzc = wc
         vxc, vyc, vzc = vc
         dp_rot = np.array([
@@ -234,9 +232,8 @@ class SimpleEKF:
         dp, wc, vzc, pz = self._imu_image_motion(px, py, omega_body, vel_ned, R_e_b)
         F = self._build_F(px, py, wc, vzc, pz)
 
-        # DKF와 동일한 state propagation (중복 적분 버그도 같이 수정)
-        self.x[0] += dp[0]
-        self.x[1] += dp[1]
+        self.x[0] += dp[0] + self.x[2] * self.dt
+        self.x[1] += dp[1] + self.x[3] * self.dt
         self.P = F @ self.P @ F.T + self.Q
 
         self.x[0] = np.clip(self.x[0], -3.0, 3.0)
@@ -292,10 +289,10 @@ class HoverYawController(Node):
         self.declare_parameter('cx', 424.0)
         self.declare_parameter('cy', 240.0)
         self.declare_parameter('cam_pitch_deg', 0.0)
-        self.declare_parameter('kp_yaw', 0.02)    # normalized error [-1,1] → rad/step (max 1 rad/s at 50Hz)
-        self.declare_parameter('kd_yaw', 0.0003)  # normalized error rate → rad/step
+        self.declare_parameter('kp_yaw', 0.5)    # normalized error [-1,1] → rad/step (max ~7.5 rad/s at 50Hz)#0.5
+        self.declare_parameter('kd_yaw', 0.0003)  # normalized error rate → rad/step #0.0003
         self.declare_parameter('dkf_dt', 0.02)
-        self.declare_parameter('dkf_delay_steps', 3)
+        self.declare_parameter('dkf_delay_steps', 10)  # 200ms / 20ms = 10 steps
         self.declare_parameter('detection_topic', '/Yolov8_Inference_1')
         self.declare_parameter('monitoring_topic', '/drone1/fmu/out/monitoring')
 
@@ -337,6 +334,8 @@ class HoverYawController(Node):
         self.prev_ex_norm = 0.0
         self.target_detected = False
         self.last_det_time = 0.0
+        self._mission_start_t = None   # wall-clock time when YAW_TRACK begins
+        self._mission_duration = 50.0  # seconds until auto-finish
         self.target_lost_timeout = 2.0  # seconds without detection → stop yawing
 
         # Publishers
@@ -468,7 +467,8 @@ class HoverYawController(Node):
         if abs(self.drone_pos[2] - alt) < 0.3:
             self.hover_pos = self.drone_pos.copy()
             self.hover_pos[2] = alt  # exact target altitude
-            self.get_logger().info(f'Takeoff complete → YAW_TRACK (hover at {self.hover_pos})')
+            self._mission_start_t = time.time()
+            self.get_logger().info(f'Takeoff complete → YAW_TRACK (hover at {self.hover_pos}) | 50s mission timer started')
             self.state = State.YAW_TRACK
 
     def _handle_yaw_track(self):
@@ -486,6 +486,7 @@ class HoverYawController(Node):
         # Check if target is still being detected (timeout)
         if not self.target_detected or (now - self.last_det_time) > self.target_lost_timeout:
             self.target_detected = False
+            self._stable_since = None   # reset stability on target loss
             self._pub_pos(self.hover_pos.tolist(), self.drone_yaw)
             self.get_logger().info(
                 f'[{self.filter_type}] Target lost — holding yaw',
@@ -497,6 +498,12 @@ class HoverYawController(Node):
         if est is None:
             self._pub_pos(self.hover_pos.tolist(), self.drone_yaw)
             return
+
+        # ── 50-second mission timeout ──────────────────────────────────────
+        if self._mission_start_t and (time.time() - self._mission_start_t) >= self._mission_duration:
+            self._auto_finish()
+            return
+        # ───────────────────────────────────────────────────────────────────
 
         u_est = est[0]
         # Normalize error to [-1, 1]
@@ -524,6 +531,14 @@ class HoverYawController(Node):
             f'Δyaw={math.degrees(delta_yaw):.2f}° yaw={math.degrees(self.drone_yaw):.1f}°',
             throttle_duration_sec=0.5
         )
+
+    def _auto_finish(self):
+        """Target centered for 5 s → save logs and shut down the launch."""
+        self.get_logger().info(
+            f'[{self.filter_type}] ✓ Target centered ≥5 s — saving logs and shutting down'
+        )
+        # SIGINT to this process propagates through ros2 launch → kills all nodes + Gazebo
+        os.kill(os.getpid(), signal.SIGINT)
 
     # ── PX4 helpers ──
     def _pub_pos(self, pos, yaw):

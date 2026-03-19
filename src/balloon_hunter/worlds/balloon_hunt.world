@@ -58,9 +58,14 @@
       </link>
     </model>
 
+    <!-- Load gazebo_ros_state plugin so /gazebo/set_entity_state service is available -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so"/>
+
     <include>
       <uri>model://red_balloon</uri>
-      <pose>3 4 4 0 0 0</pose>
+      <!-- nominal start: Gazebo X=0 (NED North), Y=10 (depth), Z=2 (height) -->
+      <!-- target_mover will override this immediately with sinusoidal motion -->
+      <pose>0 5 2 0 0 0</pose>
       <name>target_balloon</name>
     </include>
 
