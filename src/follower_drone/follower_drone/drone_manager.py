@@ -31,6 +31,7 @@ class DroneManager(Node):
         self.mode_handler.change_mode(Mode.QHAC)
         self.takeoff_mission = None
         self.formation = None
+        self.ref_ned = [0.0, 0.0, 0.0]
 
         self.ocm_publisher_ = self.create_publisher(
             OffboardControlMode,
@@ -102,9 +103,11 @@ class DroneManager(Node):
     def monitoring_callback(self, msg):
         self.monitoring_msg = msg
         if self.mode_handler.is_in_mode(Mode.QHAC):
-            if self.monitoring_msg.ref_lat == 0.0 or self.monitoring_msg.ref_lat is None:
+            if self.monitoring_msg.rtk_n == 0.0 or self.monitoring_msg.rtk_n is None:
                 return
             else:
+                if self.ref_ned == [0.0, 0.0, 0.0]:
+                    self.ref_ned = [self.monitoring_msg.rtk_n, self.monitoring_msg.rtk_e, self.monitoring_msg.rtk_d]
                 self.mode_handler.change_mode(Mode.TAKEOFF)
 
     def leader_pose_callback(self, msg):
