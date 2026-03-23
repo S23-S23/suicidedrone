@@ -47,9 +47,8 @@ class PositionEstimator(Node):
         # self.declare_parameter('fy', 676.5923040326)
         # self.declare_parameter('cx', 600.7451721112)
         # self.declare_parameter('cy', 363.7283523432)
-        # Camera pitch from SDF: 1.0 radian = 57.3 degrees (pointing down)
-        # In our convention, positive pitch = down
-        self.declare_parameter('cam_pitch_deg', 57.3)
+        # Camera pitch from SDF: 0 = forward-facing camera
+        self.declare_parameter('cam_pitch_deg', 0.0)
 
         # Topics
         self.declare_parameter('system_id', 1)
