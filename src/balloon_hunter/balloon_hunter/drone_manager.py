@@ -1,40 +1,49 @@
 #!/usr/bin/env python3
 """
-IBVS + PNG Interception Controller (v2 - Paper-faithful DKF)
-=============================================================
-Implementation of:
-  [1] Yan et al. (2025) "Precise Interception Flight Targets by IBVS of Multicopter"
-  [2] Yang et al. (2025) "High-Speed Interception Multicopter Control by IBVS"
+IBVS + PNG Interception Controller — DKF vs EKF comparison
+============================================================
+Merged from:
+  - bad_manager.py: IBVS+PNG interception logic (Yan et al. 2025)
+  - drone_manager.py: DKF/EKF filters with stability guards, logger integration
 
-DKF is based on [2] Algorithm 2 and Eq. 51:
-- State includes normalized image coordinates
-- IMU angular velocity drives image coordinate prediction via image Jacobian
-- Delayed image measurements are corrected and re-propagated using stored IMU history
+Scenario:
+  1. Takeoff → Search (fly forward) → Intercept (IBVS+PNG toward target)
+  2. DKF compensates image processing delay via IMU re-propagation
+  3. EKF uses same IMU motion model but no delay compensation
+  4. Publishes filter estimate on /filter_estimate for logger
 
-PNG + FOV Holding + Yaw PD based on [1] Eq. 6-14.
+Parameter 'filter_type': 'DKF' or 'EKF'
+
+Usage:
+  ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py filter_type:=DKF
+  ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py filter_type:=EKF
 """
 
 import math
+import os
+import signal
+import time
 import collections
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import qos_profile_sensor_data
 from px4_msgs.msg import (
     OffboardControlMode,
     TrajectorySetpoint,
     VehicleCommand,
     VehicleStatus,
     Monitoring,
+    VehicleLocalPosition,
+    VehicleAngularVelocity,
 )
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Point
 from yolov8_msgs.msg import Yolov8Inference
+from std_msgs.msg import Float32MultiArray
 from enum import Enum
 
 
-# ──────────────────────────────────────────────
-# Utility functions
-# ──────────────────────────────────────────────
+# ── Utility ──────────────────────────────────────────────────
 def rot_x(a):
     ca, sa = math.cos(a), math.sin(a)
     return np.array([[1, 0, 0], [0, ca, -sa], [0, sa, ca]], dtype=float)
@@ -58,240 +67,249 @@ def wrap_angle(a):
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
-# ──────────────────────────────────────────────
-# Paper-faithful Delayed Kalman Filter (DKF)
-# Based on Yang et al. (2025) Algorithm 2, Eq. 51
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# DKF (Paper-faithful, Yang et al. 2025, Algorithm 2)
+# ══════════════════════════════════════════════════════════════
 class DelayedKalmanFilter:
     """
-    Delayed Kalman Filter for image-space target position estimation.
-
     State: x = [p_bar_x, p_bar_y, p_bar_x_dot, p_bar_y_dot]^T
-           where p_bar = [px/foc, py/foc] (normalized image coordinates)
+           where p_bar = pixel / foc (normalized image coordinates)
 
-    Key difference from simple KF:
-    1. Prediction uses IMU angular velocity via image Jacobian (Eq. 51)
-       - Drone rotation causes known image motion -> precise prediction
-    2. Delayed measurement correction (Algorithm 2):
-       - When YOLO measurement arrives (delayed by D steps),
-         correct state at time t-D, then re-propagate to current time t
-         using stored IMU history
+    IMU-based prediction via image Jacobian (Eq. 51).
+    Delayed measurement correction + IMU re-propagation (Algorithm 2).
+    Stability guards: state clipping + covariance reset.
     """
 
-    def __init__(self, foc, R_b_c, dt=0.02, delay_steps=3, max_history=20):
-        """
-        Args:
-            foc: focal length in pixels
-            R_b_c: rotation matrix from camera frame to body frame (3x3)
-            dt: prediction timestep (controller period)
-            delay_steps: D, number of steps of image processing delay
-            max_history: maximum IMU history buffer size
-        """
+    def __init__(self, foc, R_b_c, dt=0.02, delay_steps=10, assumed_depth=10.0,
+                 max_history=50):
         self.foc = foc
         self.R_b_c = R_b_c
-        self.R_c_b = R_b_c.T  # body -> camera
+        self.R_c_b = R_b_c.T
         self.dt = dt
         self.D = delay_steps
+        self.pzc = assumed_depth
 
-        # State: [p_bar_x, p_bar_y, p_bar_x_dot, p_bar_y_dot]
         self.x = np.zeros(4)
-
-        # Measurement matrix: observe [p_bar_x, p_bar_y]
-        self.H = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-        ], dtype=float)
-
-        # Process noise (tunable)
-        q_pos = 1e-4
-        q_vel = 1e-2
-        self.Q = np.diag([q_pos, q_pos, q_vel, q_vel])
-
-        # Measurement noise (YOLO in normalized coords: ~5px / foc)
-        r_meas = (5.0 / foc) ** 2
-        self.R = np.diag([r_meas, r_meas])
-
-        # Error covariance
+        self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
+        self.Q = np.diag([1e-4, 1e-4, 1e-2, 1e-2])
+        self.R = np.diag([(5.0 / foc) ** 2] * 2)
         self.P = np.eye(4) * 0.1
 
-        # History buffer for delay compensation (Algorithm 2)
         self.history = collections.deque(maxlen=max_history)
-
         self.initialized = False
 
-    def _build_F(self, px_bar, py_bar, omega_cam, vz_c, pz_c):
-        """
-        Build state transition matrix with IMU-based image dynamics.
-        Based on Eq. 54 (Yang et al.).
-        """
+    def _imu_image_motion(self, px, py, omega_body, vel_ned, R_e_b):
+        """Eq. 51: image coordinate change from drone motion."""
         dt = self.dt
-        wxc, wyc, wzc = omega_cam
+        wc = self.R_c_b @ omega_body
+        vc = self.R_c_b @ (R_e_b.T @ vel_ned)
+        pz = self.pzc
+        wxc, wyc, wzc = wc
+        vxc, vyc, vzc = vc
 
-        # Eq. 54: image coord dynamics from rotation + translation
-        F_pp = np.eye(2) + np.array([
-            [vz_c / pz_c + py_bar * wxc - 2 * px_bar * wyc,
-             px_bar * wxc + wzc],
-            [-py_bar * wyc - wzc,
-             vz_c / pz_c + 2 * py_bar * wxc - px_bar * wyc]
+        # Rotation contribution (dominant during attitude changes)
+        dp_rot = np.array([
+            px * py * wxc - (1 + px**2) * wyc + py * wzc,
+            (1 + py**2) * wxc - px * py * wyc - px * wzc
         ]) * dt
 
+        # Translation contribution (dominant during high-speed flight)
+        dp_trans = np.array([
+            -vxc / pz + px * vzc / pz,
+            -vyc / pz + py * vzc / pz
+        ]) * dt
+
+        return dp_rot + dp_trans, wc, vzc, pz
+
+    def _build_F(self, px, py, wc, vzc, pz):
+        """Eq. 54: state transition matrix."""
+        dt = self.dt
+        wxc, wyc, wzc_val = wc
+        F_pp = np.eye(2) + np.array([
+            [vzc / pz + py * wxc - 2 * px * wyc, px * wxc + wzc_val],
+            [-py * wyc - wzc_val, vzc / pz + 2 * py * wxc - px * wyc]
+        ]) * dt
         F = np.eye(4)
         F[0:2, 0:2] = F_pp
         F[0:2, 2:4] = np.eye(2) * dt
         return F
 
-    def _compute_image_motion_from_imu(self, px_bar, py_bar, omega_body, vel_ned, R_e_b):
-        """
-        Compute image coordinate change from drone motion via image Jacobian (Eq. 51).
-
-        The key insight: IMU tells us exactly how the drone rotated,
-        so we can predict how much the target moved in the image
-        even without a new YOLO measurement.
-        """
-        dt = self.dt
-
-        # Transform: body -> camera
-        omega_cam = self.R_c_b @ omega_body
-        vel_body = R_e_b.T @ vel_ned
-        vel_cam = self.R_c_b @ vel_body
-
-        # Assumed depth (approximate; errors are second-order)
-        pz_c = 15.0
-
-        wxc, wyc, wzc = omega_cam
-        vxc, vyc, vzc = vel_cam
-
-        # Eq. 51: rotation contribution (dominant during yaw maneuvers)
-        dp_rot = np.array([
-            px_bar * py_bar * wxc - (1 + px_bar**2) * wyc + py_bar * wzc,
-            (1 + py_bar**2) * wxc - px_bar * py_bar * wyc - px_bar * wzc
-        ]) * dt
-
-        # Eq. 51: translation contribution
-        dp_trans = np.array([
-            -1.0 / pz_c * vxc + px_bar / pz_c * vzc,
-            -1.0 / pz_c * vyc + py_bar / pz_c * vzc
-        ]) * dt
-
-        return dp_rot + dp_trans, omega_cam, vzc, pz_c
-
     def predict(self, omega_body, vel_ned, R_e_b):
-        """
-        Prediction step using IMU data (Algorithm 2, line 4).
-
-        Uses image Jacobian + IMU angular velocity for prediction,
-        far more accurate than constant-velocity model during maneuvers.
-        """
+        """Algorithm 2, line 4: propagate state with IMU data."""
         if not self.initialized:
             return
+        px, py = self.x[0], self.x[1]
+        dp, wc, vzc, pz = self._imu_image_motion(px, py, omega_body, vel_ned, R_e_b)
+        F = self._build_F(px, py, wc, vzc, pz)
 
-        px_bar, py_bar = self.x[0], self.x[1]
-
-        delta_p, omega_cam, vzc, pzc = self._compute_image_motion_from_imu(
-            px_bar, py_bar, omega_body, vel_ned, R_e_b
-        )
-
-        F = self._build_F(px_bar, py_bar, omega_cam, vzc, pzc)
-
-        # Save state + IMU BEFORE prediction (for re-propagation)
+        # Save state + IMU BEFORE prediction (for delayed re-propagation)
         self.history.append({
-            'x': self.x.copy(),
-            'P': self.P.copy(),
-            'omega_body': omega_body.copy(),
-            'vel_ned': vel_ned.copy(),
-            'R_e_b': R_e_b.copy(),
+            'x': self.x.copy(), 'P': self.P.copy(),
+            'w': omega_body.copy(), 'v': vel_ned.copy(), 'R': R_e_b.copy(),
         })
 
-        # State prediction with IMU-based image motion + target velocity
-        self.x[0] += delta_p[0] + self.x[2] * self.dt
-        self.x[1] += delta_p[1] + self.x[3] * self.dt
-
-        # Covariance prediction
+        # State prediction
+        self.x[0] += dp[0] + self.x[2] * self.dt
+        self.x[1] += dp[1] + self.x[3] * self.dt
         self.P = F @ self.P @ F.T + self.Q
 
-    def update(self, z_pixel):
-        """
-        Correction with DELAYED measurement (Algorithm 2, lines 5-9).
+        # Stability guards
+        self.x[0] = np.clip(self.x[0], -3.0, 3.0)
+        self.x[1] = np.clip(self.x[1], -3.0, 3.0)
+        self.x[2] = np.clip(self.x[2], -2.0, 2.0)
+        self.x[3] = np.clip(self.x[3], -2.0, 2.0)
+        if np.any(np.diag(self.P) > 10.0):
+            self.P = np.eye(4) * 0.1
 
-        1. Roll back to state at time t-D
-        2. Correct with measurement
-        3. Re-propagate to now using stored IMU history
-        """
-        z_bar = np.array([z_pixel[0] / self.foc, z_pixel[1] / self.foc])
+    def update(self, z_pixel):
+        """Algorithm 2, lines 5-9: correct with DELAYED measurement."""
+        zb = np.array([z_pixel[0] / self.foc, z_pixel[1] / self.foc])
 
         if not self.initialized:
-            self.x[0] = z_bar[0]
-            self.x[1] = z_bar[1]
-            self.x[2] = 0.0
-            self.x[3] = 0.0
+            self.x[:2] = zb
+            self.x[2:] = 0
             self.P = np.eye(4) * 0.01
             self.initialized = True
             return
 
         D = self.D
-        hist_len = len(self.history)
-
-        if hist_len < D:
-            self._standard_correction(z_bar)
+        hl = len(self.history)
+        if hl < D:
+            self._std_correct(zb)
             return
 
-        # Step 1: Retrieve state at t-D
-        idx_delayed = hist_len - D
-        x_delayed = self.history[idx_delayed]['x'].copy()
-        P_delayed = self.history[idx_delayed]['P'].copy()
+        # Step 1: Retrieve state at time t-D
+        idx = hl - D
+        xd, Pd = self.history[idx]['x'].copy(), self.history[idx]['P'].copy()
 
-        # Step 2: Correct at t-D (Eq. 34-36)
-        H = self.H
-        S = H @ P_delayed @ H.T + self.R
-        K = P_delayed @ H.T @ np.linalg.inv(S)
-        x_corrected = x_delayed + K @ (z_bar - H @ x_delayed)
-        P_corrected = (np.eye(4) - K @ H) @ P_delayed
+        # Step 2: Correct state at t-D with current measurement
+        S = self.H @ Pd @ self.H.T + self.R
+        K = Pd @ self.H.T @ np.linalg.inv(S)
+        xc = xd + K @ (zb - self.H @ xd)
+        Pc = (np.eye(4) - K @ self.H) @ Pd
 
-        # Step 3: Re-propagate t-D -> now using IMU history (Alg 2, lines 7-8)
-        x_re = x_corrected.copy()
-        P_re = P_corrected.copy()
-
-        for i in range(idx_delayed, hist_len):
+        # Step 3: Re-propagate from t-D to now using stored IMU data
+        for i in range(idx, hl):
             h = self.history[i]
-            px_bar, py_bar = x_re[0], x_re[1]
-
-            delta_p, omega_cam, vzc, pzc = self._compute_image_motion_from_imu(
-                px_bar, py_bar,
-                h['omega_body'], h['vel_ned'], h['R_e_b']
+            dp, wc, vzc, pz = self._imu_image_motion(
+                xc[0], xc[1], h['w'], h['v'], h['R']
             )
-            F = self._build_F(px_bar, py_bar, omega_cam, vzc, pzc)
+            F = self._build_F(xc[0], xc[1], wc, vzc, pz)
+            xc[0] += dp[0] + xc[2] * self.dt
+            xc[1] += dp[1] + xc[3] * self.dt
+            Pc = F @ Pc @ F.T + self.Q
 
-            x_re[0] += delta_p[0] + x_re[2] * self.dt
-            x_re[1] += delta_p[1] + x_re[3] * self.dt
-            P_re = F @ P_re @ F.T + self.Q
+        # Step 4: Replace current state with re-propagated result
+        self.x, self.P = xc, Pc
 
-        # Step 4: Replace current state
-        self.x = x_re
-        self.P = P_re
+    def _std_correct(self, zb):
+        S = self.H @ self.P @ self.H.T + self.R
+        K = self.P @ self.H.T @ np.linalg.inv(S)
+        self.x += K @ (zb - self.H @ self.x)
+        self.P = (np.eye(4) - K @ self.H) @ self.P
 
-    def _standard_correction(self, z_bar):
-        H = self.H
-        S = H @ self.P @ H.T + self.R
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ (z_bar - H @ self.x)
-        self.P = (np.eye(4) - K @ H) @ self.P
-
-    def get_estimate_pixel(self):
-        """Get current estimate in pixel coordinates."""
+    def get_pixel(self):
         if not self.initialized:
             return None
-        return np.array([
-            self.x[0] * self.foc,
-            self.x[1] * self.foc,
-            self.x[2] * self.foc,
-            self.x[3] * self.foc,
-        ])
+        return np.array([self.x[0] * self.foc, self.x[1] * self.foc,
+                         self.x[2] * self.foc, self.x[3] * self.foc])
 
 
-# ──────────────────────────────────────────────
-# Mission State Machine
-# ──────────────────────────────────────────────
-class MissionState(Enum):
+# ══════════════════════════════════════════════════════════════
+# EKF (IMU-driven, no delay compensation)
+# ══════════════════════════════════════════════════════════════
+class SimpleEKF:
+    """
+    Same IMU-driven motion model as DKF for fair comparison.
+    Only difference: treats delayed measurement as current (no re-propagation).
+    """
+
+    def __init__(self, foc, R_b_c, dt=0.02, assumed_depth=10.0):
+        self.foc = foc
+        self.R_b_c = R_b_c
+        self.R_c_b = R_b_c.T
+        self.dt = dt
+        self.pzc = assumed_depth
+
+        self.x = np.zeros(4)
+        self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
+        self.Q = np.diag([1e-4, 1e-4, 1e-2, 1e-2])
+        self.R = np.diag([(5.0 / foc) ** 2] * 2)
+        self.P = np.eye(4) * 0.1
+        self.initialized = False
+
+    def _imu_image_motion(self, px, py, omega_body, vel_ned, R_e_b):
+        dt = self.dt
+        wc = self.R_c_b @ omega_body
+        vc = self.R_c_b @ (R_e_b.T @ vel_ned)
+        pz = self.pzc
+        wxc, wyc, wzc = wc
+        vxc, vyc, vzc = vc
+        dp_rot = np.array([
+            px * py * wxc - (1 + px**2) * wyc + py * wzc,
+            (1 + py**2) * wxc - px * py * wyc - px * wzc
+        ]) * dt
+        dp_trans = np.array([
+            -vxc / pz + px * vzc / pz,
+            -vyc / pz + py * vzc / pz
+        ]) * dt
+        return dp_rot + dp_trans, wc, vzc, pz
+
+    def _build_F(self, px, py, wc, vzc, pz):
+        dt = self.dt
+        wxc, wyc, wzc_val = wc
+        F_pp = np.eye(2) + np.array([
+            [vzc / pz + py * wxc - 2 * px * wyc, px * wxc + wzc_val],
+            [-py * wyc - wzc_val, vzc / pz + 2 * py * wxc - px * wyc]
+        ]) * dt
+        F = np.eye(4)
+        F[0:2, 0:2] = F_pp
+        F[0:2, 2:4] = np.eye(2) * dt
+        return F
+
+    def predict(self, omega_body, vel_ned, R_e_b):
+        if not self.initialized:
+            return
+        px, py = self.x[0], self.x[1]
+        dp, wc, vzc, pz = self._imu_image_motion(px, py, omega_body, vel_ned, R_e_b)
+        F = self._build_F(px, py, wc, vzc, pz)
+
+        self.x[0] += dp[0] + self.x[2] * self.dt
+        self.x[1] += dp[1] + self.x[3] * self.dt
+        self.P = F @ self.P @ F.T + self.Q
+
+        self.x[0] = np.clip(self.x[0], -3.0, 3.0)
+        self.x[1] = np.clip(self.x[1], -3.0, 3.0)
+        self.x[2] = np.clip(self.x[2], -2.0, 2.0)
+        self.x[3] = np.clip(self.x[3], -2.0, 2.0)
+        if np.any(np.diag(self.P) > 10.0):
+            self.P = np.eye(4) * 0.1
+
+    def update(self, z_pixel):
+        """No delay compensation — treats delayed measurement as current."""
+        zb = np.array([z_pixel[0] / self.foc, z_pixel[1] / self.foc])
+        if not self.initialized:
+            self.x[:2] = zb
+            self.x[2:] = 0
+            self.P = np.eye(4) * 0.01
+            self.initialized = True
+            return
+        S = self.H @ self.P @ self.H.T + self.R
+        K = self.P @ self.H.T @ np.linalg.inv(S)
+        self.x += K @ (zb - self.H @ self.x)
+        self.P = (np.eye(4) - K @ self.H) @ self.P
+
+    def get_pixel(self):
+        if not self.initialized:
+            return None
+        return np.array([self.x[0] * self.foc, self.x[1] * self.foc,
+                         self.x[2] * self.foc, self.x[3] * self.foc])
+
+
+# ══════════════════════════════════════════════════════════════
+# State Machine
+# ══════════════════════════════════════════════════════════════
+class State(Enum):
     IDLE = 0
     TAKEOFF = 1
     SEARCH = 2
@@ -299,41 +317,54 @@ class MissionState(Enum):
     DONE = 4
 
 
-# ──────────────────────────────────────────────
-# Main IBVS + PNG Controller Node
-# ──────────────────────────────────────────────
-class IBVSPNGController(Node):
+# ══════════════════════════════════════════════════════════════
+# IBVS + PNG Interception Controller
+# ══════════════════════════════════════════════════════════════
+class InterceptionController(Node):
     def __init__(self):
-        super().__init__('ibvs_png_controller')
+        super().__init__('drone_manager')
 
         # ── Parameters ──
         self.declare_parameter('system_id', 1)
+        self.declare_parameter('filter_type', 'DKF')
         self.declare_parameter('takeoff_height', 6.0)
-        self.declare_parameter('img_width', 848)
-        self.declare_parameter('img_height', 480)
+
+        # Camera intrinsics
         self.declare_parameter('fx', 454.8)
         self.declare_parameter('fy', 454.8)
         self.declare_parameter('cx', 424.0)
         self.declare_parameter('cy', 240.0)
         self.declare_parameter('cam_pitch_deg', 0.0)
+
+        # PNG parameters (Eq. 9, Yan et al.)
         self.declare_parameter('K_y', 3.0)
         self.declare_parameter('K_z', 3.0)
-        self.declare_parameter('k_a', 2.0)
-        self.declare_parameter('kp_yaw', 0.03)
-        self.declare_parameter('kd_yaw', 0.01)
+        self.declare_parameter('k_a', 2.0)        # velocity gain (Eq. 14)
+
+        # Yaw PD (Eq. 13)
+        self.declare_parameter('kp_yaw', 0.01)
+        self.declare_parameter('kd_yaw', 0.0003)
+
+        # Speed limits
         self.declare_parameter('max_speed', 10.0)
-        self.declare_parameter('search_speed', 3.0)
-        self.declare_parameter('collision_distance', 0.5)
+        self.declare_parameter('collision_distance', 1.0)
+
+        # Filter parameters
         self.declare_parameter('dkf_dt', 0.02)
-        self.declare_parameter('dkf_delay_steps', 3)
+        self.declare_parameter('dkf_delay_steps', 10)  # 200ms / 20ms = 10 steps
+        self.declare_parameter('assumed_depth', 10.0)   # pzc for image Jacobian
+
+        # Mission
+        self.declare_parameter('mission_timeout', 60.0)
+
+        # Topics
         self.declare_parameter('detection_topic', '/Yolov8_Inference_1')
         self.declare_parameter('monitoring_topic', '/drone1/fmu/out/monitoring')
 
         # ── Get parameters ──
         self.system_id = self.get_parameter('system_id').value
+        self.filter_type = self.get_parameter('filter_type').value.upper()
         self.takeoff_height = self.get_parameter('takeoff_height').value
-        self.img_w = self.get_parameter('img_width').value
-        self.img_h = self.get_parameter('img_height').value
         self.fx = self.get_parameter('fx').value
         self.fy = self.get_parameter('fy').value
         self.cx = self.get_parameter('cx').value
@@ -347,138 +378,160 @@ class IBVSPNGController(Node):
         self.kp_yaw = self.get_parameter('kp_yaw').value
         self.kd_yaw = self.get_parameter('kd_yaw').value
         self.max_speed = self.get_parameter('max_speed').value
-        self.search_speed = self.get_parameter('search_speed').value
         self.collision_dist = self.get_parameter('collision_distance').value
+        self.mission_timeout = self.get_parameter('mission_timeout').value
 
         dkf_dt = self.get_parameter('dkf_dt').value
         dkf_delay = self.get_parameter('dkf_delay_steps').value
+        assumed_depth = self.get_parameter('assumed_depth').value
 
-        self.detection_topic = self.get_parameter('detection_topic').value
-        self.monitoring_topic = self.get_parameter('monitoring_topic').value
         self.topic_prefix = f"drone{self.system_id}/fmu/"
 
         # ── Camera frame transform ──
+        # body→camera: body_x=cam_z(forward), body_y=cam_x(right), body_z=cam_y(down)
         self.R_b_c = np.array([
             [0, 0, 1],
             [1, 0, 0],
             [0, 1, 0],
-        ], dtype=float)
-        self.R_b_c = self.R_b_c @ rot_x(-self.cam_pitch)
+        ], dtype=float) @ rot_x(-self.cam_pitch)
+
+        # ── Create filter ──
+        if self.filter_type == 'DKF':
+            self.filt = DelayedKalmanFilter(
+                self.foc, self.R_b_c, dkf_dt, dkf_delay,
+                assumed_depth=assumed_depth, max_history=dkf_delay + 20
+            )
+        else:
+            self.filt = SimpleEKF(
+                self.foc, self.R_b_c, dkf_dt,
+                assumed_depth=assumed_depth
+            )
 
         # ── State variables ──
-        self.state = MissionState.IDLE
+        self.state = State.IDLE
         self.drone_pos = np.zeros(3)
         self.drone_vel = np.zeros(3)
         self.drone_yaw = 0.0
-        self.drone_pitch = 0.0
+        self.drone_pitch_val = 0.0
         self.drone_roll = 0.0
-        self.drone_omega_body = np.zeros(3)
+        self.drone_omega = np.zeros(3)
         self.nav_state = 0
         self.arming_state = 0
         self.last_cmd_time = 0.0
-        self.search_start_pos = None
-        self.search_distance_limit = 15.0
+        self._mission_start_t = None
 
-        # PNG state
+        # Target tracking
+        self.target_detected = False
+        self.target_lost_count = 0
+        self.target_lost_threshold = 50   # 50 ticks at 50Hz = 1s
+
+        # PNG state (Eq. 9)
         self.prev_qy = None
         self.prev_qz = None
         self.prev_sigma_y = None
         self.prev_sigma_z = None
         self.prev_ex = 0.0
 
-        # Target tracking
-        self.target_detected = False
-        self.target_lost_count = 0
-        self.target_lost_threshold = 50
-
-        # ── Paper-faithful DKF ──
-        self.dkf = DelayedKalmanFilter(
-            foc=self.foc,
-            R_b_c=self.R_b_c,
-            dt=dkf_dt,
-            delay_steps=dkf_delay,
-            max_history=30
-        )
+        # Target position (from target_mover or known)
+        self.target_world_pos = None
 
         # ── Publishers ──
         self.ocm_pub = self.create_publisher(
-            OffboardControlMode, f'{self.topic_prefix}in/offboard_control_mode', qos_profile_sensor_data)
+            OffboardControlMode,
+            f'{self.topic_prefix}in/offboard_control_mode',
+            qos_profile_sensor_data
+        )
         self.traj_pub = self.create_publisher(
-            TrajectorySetpoint, f'{self.topic_prefix}in/trajectory_setpoint', qos_profile_sensor_data)
+            TrajectorySetpoint,
+            f'{self.topic_prefix}in/trajectory_setpoint',
+            qos_profile_sensor_data
+        )
         self.cmd_pub = self.create_publisher(
-            VehicleCommand, f'{self.topic_prefix}in/vehicle_command', qos_profile_sensor_data)
-        self.target_pos_pub = self.create_publisher(
-            PoseStamped, '/ibvs_target_position', 10)
+            VehicleCommand,
+            f'{self.topic_prefix}in/vehicle_command',
+            qos_profile_sensor_data
+        )
+        self.est_pub = self.create_publisher(Float32MultiArray, '/filter_estimate', 10)
+        self.target_pos_pub = self.create_publisher(PoseStamped, '/ibvs_target_position', 10)
 
         # ── Subscribers ──
         self.create_subscription(
             VehicleStatus, f'{self.topic_prefix}out/vehicle_status',
-            self.status_cb, qos_profile_sensor_data)
+            self.status_cb, qos_profile_sensor_data
+        )
         self.create_subscription(
-            Monitoring, self.monitoring_topic,
-            self.monitoring_cb, qos_profile_sensor_data)
+            Monitoring, self.get_parameter('monitoring_topic').value,
+            self.monitoring_cb, qos_profile_sensor_data
+        )
         self.create_subscription(
-            Yolov8Inference, self.detection_topic,
-            self.detection_cb, 10)
+            VehicleLocalPosition, f'{self.topic_prefix}out/vehicle_local_position',
+            self.vlp_cb, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            VehicleAngularVelocity, f'{self.topic_prefix}out/vehicle_angular_velocity',
+            self.avel_cb, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            Yolov8Inference, self.get_parameter('detection_topic').value,
+            self.det_cb, 10
+        )
+        self.create_subscription(Point, '/target_world_pos', self._target_pos_cb, 10)
 
         # ── Timers ──
-        self.create_timer(0.1, self.ocm_timer_cb)
-        self.create_timer(0.02, self.control_timer_cb)
-        self.start_timer = self.create_timer(5.0, self.start_mission)
+        self.create_timer(0.1, self.ocm_cb)       # 10Hz offboard heartbeat
+        self.create_timer(0.02, self.control_cb)   # 50Hz main control
+        self.create_timer(5.0, self.start_mission)  # one-shot
 
         self.get_logger().info('═══════════════════════════════════════')
-        self.get_logger().info('  IBVS + PNG Controller (Paper DKF v2)')
+        self.get_logger().info(f'  IBVS + PNG Interception Controller')
+        self.get_logger().info(f'  Filter: *** {self.filter_type} ***')
+        self.get_logger().info(f'  Delay: {dkf_delay} steps ({dkf_delay * dkf_dt * 1000:.0f}ms)')
+        self.get_logger().info(f'  Depth: {assumed_depth}m')
         self.get_logger().info(f'  PNG: Ky={self.Ky}, Kz={self.Kz}, ka={self.ka}')
         self.get_logger().info(f'  Yaw PD: kp={self.kp_yaw}, kd={self.kd_yaw}')
-        self.get_logger().info(f'  DKF: dt={dkf_dt}, delay={dkf_delay} steps')
-        self.get_logger().info(f'  Camera: {self.img_w}x{self.img_h}, foc={self.foc}')
+        self.get_logger().info(f'  Max speed: {self.max_speed} m/s')
         self.get_logger().info('═══════════════════════════════════════')
 
-    # ──────────────────────────────────────────
-    # Callbacks
-    # ──────────────────────────────────────────
+    # ── Callbacks ────────────────────────────────────────────
     def status_cb(self, msg):
         self.nav_state = msg.nav_state
         self.arming_state = msg.arming_state
 
     def monitoring_cb(self, msg: Monitoring):
         self.drone_pos = np.array([msg.pos_x, msg.pos_y, msg.pos_z])
-        if hasattr(msg, 'vel_x'):
-            self.drone_vel = np.array([msg.vel_x, msg.vel_y, msg.vel_z])
         self.drone_yaw = msg.head
-        self.drone_pitch = getattr(msg, 'pitch', 0.0)
-        self.drone_roll = getattr(msg, 'roll', 0.0)
-        if hasattr(msg, 'rollspeed'):
-            self.drone_omega_body = np.array([
-                msg.rollspeed, msg.pitchspeed, msg.yawspeed
-            ])
+        self.drone_pitch_val = msg.pitch
+        self.drone_roll = msg.roll
 
-    def detection_cb(self, msg: Yolov8Inference):
+    def vlp_cb(self, msg: VehicleLocalPosition):
+        if msg.v_xy_valid and msg.v_z_valid:
+            self.drone_vel = np.array([msg.vx, msg.vy, msg.vz])
+
+    def avel_cb(self, msg: VehicleAngularVelocity):
+        self.drone_omega = np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
+
+    def det_cb(self, msg: Yolov8Inference):
         if not msg.yolov8_inference:
             return
         det = msg.yolov8_inference[0]
         u = (det.left + det.right) * 0.5
         v = (det.top + det.bottom) * 0.5
-
-        # DKF handles delay internally: correct past, re-propagate to now
-        self.dkf.update(np.array([u, v]))
+        self.filt.update(np.array([u, v]))
         self.target_detected = True
         self.target_lost_count = 0
 
-        self.get_logger().info(f'[DET] bbox=({u:.0f},{v:.0f})', throttle_duration_sec=1.0)
+    def _target_pos_cb(self, msg: Point):
+        self.target_world_pos = np.array([msg.x, msg.y, msg.z])
 
     def start_mission(self):
-        self.start_timer.cancel()
-        if self.state == MissionState.IDLE:
-            self.get_logger().info('Mission start -> TAKEOFF')
-            self.state = MissionState.TAKEOFF
+        if self.state == State.IDLE:
+            self.get_logger().info(f'Mission start ({self.filter_type}) -> TAKEOFF')
+            self.state = State.TAKEOFF
 
-    # ──────────────────────────────────────────
-    # Offboard heartbeat
-    # ──────────────────────────────────────────
-    def ocm_timer_cb(self):
+    # ── Offboard heartbeat (10Hz) ────────────────────────────
+    def ocm_cb(self):
         msg = OffboardControlMode()
-        if self.state == MissionState.INTERCEPT:
+        if self.state == State.INTERCEPT:
             msg.position = False
             msg.velocity = True
         else:
@@ -487,122 +540,147 @@ class IBVSPNGController(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.ocm_pub.publish(msg)
 
-    # ──────────────────────────────────────────
-    # Main control loop (50Hz)
-    # ──────────────────────────────────────────
-    def control_timer_cb(self):
-        R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch) @ rot_x(self.drone_roll)
+    # ── Main control loop (50Hz) ─────────────────────────────
+    def control_cb(self):
+        R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val) @ rot_x(self.drone_roll)
 
-        # DKF predict with IMU (Algorithm 2, line 4)
-        if self.dkf.initialized:
-            self.dkf.predict(
-                omega_body=self.drone_omega_body,
+        # Filter predict step (both DKF and EKF use IMU)
+        if self.filt.initialized:
+            self.filt.predict(
+                omega_body=self.drone_omega,
                 vel_ned=self.drone_vel,
                 R_e_b=R_e_b
             )
 
-        if not self.target_detected:
+        # Publish filter estimate for logger
+        est = self.filt.get_pixel()
+        if est is not None:
+            msg = Float32MultiArray()
+            msg.data = [float(est[0]), float(est[1]), float(est[2]), float(est[3])]
+            self.est_pub.publish(msg)
+
+        # Track target loss
+        if not self.target_detected: #??
             self.target_lost_count += 1
 
-        if self.state == MissionState.IDLE:
+        # State machine
+        if self.state == State.IDLE:
             self._idle()
-        elif self.state == MissionState.TAKEOFF:
+        elif self.state == State.TAKEOFF:
             self._takeoff()
-        elif self.state == MissionState.SEARCH:
+        elif self.state == State.SEARCH:
             self._search()
-        elif self.state == MissionState.INTERCEPT:
+        elif self.state == State.INTERCEPT:
             self._intercept()
-        elif self.state == MissionState.DONE:
+        elif self.state == State.DONE:
             self._done()
 
-    # ──────────────────────────────────────────
-    # State handlers
-    # ──────────────────────────────────────────
+    # ── State handlers ───────────────────────────────────────
     def _idle(self):
         safe_z = max(self.drone_pos[2], -0.1)
-        self._pub_position([self.drone_pos[0], self.drone_pos[1], safe_z])
+        self._pub_pos([self.drone_pos[0], self.drone_pos[1], safe_z])
 
     def _takeoff(self):
-        target_alt = -self.takeoff_height
+        alt = -self.takeoff_height
         now = self.get_clock().now().nanoseconds / 1e9
 
         if self.arming_state != VehicleStatus.ARMING_STATE_ARMED or \
            self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             safe_z = max(self.drone_pos[2], -0.1)
-            self._pub_position([self.drone_pos[0], self.drone_pos[1], safe_z])
+            self._pub_pos([self.drone_pos[0], self.drone_pos[1], safe_z])
         else:
-            self._pub_position([self.drone_pos[0], self.drone_pos[1], target_alt])
+            self._pub_pos([self.drone_pos[0], self.drone_pos[1], alt])
 
         if self.arming_state != VehicleStatus.ARMING_STATE_ARMED:
             if now - self.last_cmd_time > 1.0:
-                self._pub_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
                 self.get_logger().info('ARM requested')
                 self.last_cmd_time = now
             return
 
         if self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             if now - self.last_cmd_time > 1.0:
-                self._pub_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
                 self.get_logger().info('OFFBOARD requested')
                 self.last_cmd_time = now
             return
 
-        if abs(self.drone_pos[2] - target_alt) < 0.3:
+        if abs(self.drone_pos[2] - alt) < 0.3:
             self.get_logger().info('Takeoff complete -> SEARCH')
-            self.search_start_pos = self.drone_pos.copy()
-            self.state = MissionState.SEARCH
+            self.state = State.SEARCH
 
     def _search(self):
-        if self.search_start_pos is None:
-            self.search_start_pos = self.drone_pos.copy()
-
-        if self.target_detected and self.dkf.initialized:
-            self.get_logger().info('Target acquired -> INTERCEPT')
+        """Fly forward until target is detected."""
+        if self.target_detected and self.filt.initialized:
+            self.get_logger().info(f'Target acquired ({self.filter_type}) -> INTERCEPT')
             self._init_png_state()
-            self.state = MissionState.INTERCEPT
+            self._mission_start_t = time.time()
+            self.state = State.INTERCEPT
             return
 
-        dist = np.linalg.norm(self.drone_pos[:2] - self.search_start_pos[:2])
-        if dist >= self.search_distance_limit:
-            self._pub_position([self.drone_pos[0], self.drone_pos[1], -self.takeoff_height])
-            self.get_logger().info('Search limit reached', throttle_duration_sec=3.0)
-            return
-
-        self._pub_position([5.0, 0.0, -self.takeoff_height])
+        # Fly forward (positive Y in NED = forward in typical Gazebo setup)
+        self._pub_pos([5.0, 0.0, -self.takeoff_height])
 
     def _intercept(self):
-        """Core IBVS + PNG controller (Yan et al. Eq. 3-14)."""
+        """Core IBVS + PNG controller (Yan et al. 2025, Eq. 3-14)."""
+
+        # ── Mission timeout ──
+        if self._mission_start_t and \
+           (time.time() - self._mission_start_t) >= self.mission_timeout:
+            self.get_logger().info(f'[{self.filter_type}] Mission timeout -> DONE')
+            self._finish()
+            return
+
+        # ── Collision detection ──
+        if self.target_world_pos is not None:
+            # target_world_pos is in Gazebo frame (x, y, z)
+            # drone_pos is in NED (x=north, y=east, z=down)
+            # Gazebo: x=north, y=east, z=up → NED: same x,y but z=-z_gazebo
+            target_ned = np.array([
+                self.target_world_pos[0],
+                self.target_world_pos[1],
+                -self.target_world_pos[2]
+            ])
+            dist = np.linalg.norm(self.drone_pos - target_ned)
+            if dist < self.collision_dist:
+                self.get_logger().info(
+                    f'[{self.filter_type}] COLLISION at dist={dist:.2f}m -> DONE'
+                )
+                self._finish()
+                return
+
+        # ── Check target lost ──
         if self.target_lost_count > self.target_lost_threshold:
             self.get_logger().warn('Target lost! -> SEARCH')
             self.target_detected = False
             self.prev_qy = None
-            self.prev_qz = None
-            self.state = MissionState.SEARCH
+            self.state = State.SEARCH
             return
 
-        est = self.dkf.get_estimate_pixel()
+        est = self.filt.get_pixel()
         if est is None:
-            self._pub_velocity([0.0, 0.0, 0.0], self.drone_yaw)
+            self._pub_vel([0.0, 0.0, 0.0], self.drone_yaw)
             return
 
         u_est, v_est = est[0], est[1]
 
-        # Image error (Eq. 3)
+        # ── Image error (Eq. 3) ──
         ex = u_est - self.cx
         ey = v_est - self.cy
 
-        # LOS direction (Eq. 5)
+        # ── LOS direction from image (Eq. 5) ──
         ray_cam = np.array([ex, ey, self.foc])
         ray_body = self.R_b_c @ ray_cam
-        R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch)
-        nt = normalize(R_e_b @ ray_body)
+        R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val)
+        ray_ned = R_e_b @ ray_body
+        nt = normalize(ray_ned)
 
-        # LOS angles (Eq. 7)
+        # ── LOS angles (Eq. 7) ──
         nt_xy = math.sqrt(nt[0]**2 + nt[1]**2)
         qy = math.atan2(nt[2], nt_xy) if nt_xy > 1e-9 else 0.0
         qz = math.atan2(nt[0], nt[1]) if abs(nt[1]) > 1e-9 else 0.0
 
-        # Velocity angles (Eq. 8)
+        # ── Velocity angles (Eq. 8) ──
         speed = np.linalg.norm(self.drone_vel)
         if speed > 0.5:
             nv = normalize(self.drone_vel)
@@ -610,70 +688,96 @@ class IBVSPNGController(Node):
             sigma_y = math.atan2(nv[2], nv_xy) if nv_xy > 1e-9 else 0.0
             sigma_z = math.atan2(nv[0], nv[1]) if abs(nv[1]) > 1e-9 else 0.0
         else:
-            sigma_y, sigma_z = qy, qz
+            sigma_y = qy
+            sigma_z = qz
 
-        # PNG (Eq. 9)
+        # ── PNG desired velocity angle (Eq. 9) ──
         if self.prev_qy is not None:
-            sigma_yd = self.Ky * wrap_angle(qy - self.prev_qy) + self.prev_sigma_y
-            sigma_zd = self.Kz * wrap_angle(qz - self.prev_qz) + self.prev_sigma_z
+            delta_qy = wrap_angle(qy - self.prev_qy)
+            delta_qz = wrap_angle(qz - self.prev_qz)
+            sigma_yd = self.Ky * delta_qy + self.prev_sigma_y
+            sigma_zd = self.Kz * delta_qz + self.prev_sigma_z
         else:
-            sigma_yd, sigma_zd = qy, qz
+            # First iteration: initialise desired velocity angle to current velocity angle
+            sigma_yd = sigma_y
+            sigma_zd = sigma_z
 
-        self.prev_qy, self.prev_qz = qy, qz
-        self.prev_sigma_y, self.prev_sigma_z = sigma_yd, sigma_zd
+        self.prev_qy = qy
+        self.prev_qz = qz
+        self.prev_sigma_y = sigma_yd
+        self.prev_sigma_z = sigma_zd
 
-        # Desired velocity (Eq. 10, 14)
+        # ── Desired velocity direction (Eq. 10) ──
         cos_sy = math.cos(sigma_yd)
         nvd = normalize(np.array([
             cos_sy * math.sin(sigma_zd),
             cos_sy * math.cos(sigma_zd),
             math.sin(sigma_yd)
         ]))
-        vd = clamp(speed + self.ka, 1.0, self.max_speed) * nvd
 
-        # Yaw PD (Eq. 13)
+        # ── Desired speed (Eq. 14) ──
+        vd_mag = clamp(speed + self.ka, 1.0, self.max_speed)
+        vd = vd_mag * nvd
+
+        # ── Yaw PD controller (Eq. 13) ──
         ex_dot = (ex - self.prev_ex) / 0.02
+        yaw_rate_cmd = self.kp_yaw * ex + self.kd_yaw * ex_dot
         self.prev_ex = ex
-        desired_yaw = wrap_angle(
-            self.drone_yaw + (self.kp_yaw * ex + self.kd_yaw * ex_dot) * 0.02
-        )
+        desired_yaw = wrap_angle(self.drone_yaw + yaw_rate_cmd * 0.02)
 
-        self._pub_velocity(vd, desired_yaw)
+        # ── Publish velocity command ──
+        self._pub_vel(vd, desired_yaw)
 
+        # ── Debug ──
         self.get_logger().info(
-            f'[IBVS] e=({ex:.0f},{ey:.0f}) q=({math.degrees(qy):.1f},{math.degrees(qz):.1f}) '
-            f'v={speed:.1f} vd={np.linalg.norm(vd):.1f}',
+            f'[{self.filter_type}] e=({ex:.0f},{ey:.0f}) '
+            f'q=({math.degrees(qy):.1f},{math.degrees(qz):.1f})deg '
+            f'v={speed:.1f} vd={vd_mag:.1f}m/s '
+            f'w=({self.drone_omega[0]:.2f},{self.drone_omega[1]:.2f},{self.drone_omega[2]:.2f})',
             throttle_duration_sec=0.5
         )
+
+        # Debug target direction visualization
         self._publish_debug_target(nt)
 
     def _done(self):
-        self._pub_position(self.drone_pos.tolist(), yaw=self.drone_yaw)
-        self.get_logger().info('DONE, hovering.', throttle_duration_sec=5.0)
+        self._pub_pos(self.drone_pos.tolist(), yaw=self.drone_yaw)
+        self.get_logger().info('Mission DONE, hovering.', throttle_duration_sec=5.0)
 
+    # ── Helpers ──────────────────────────────────────────────
     def _init_png_state(self):
-        self.prev_qy = self.prev_qz = None
-        self.prev_sigma_y = self.prev_sigma_z = None
+        self.prev_qy = None
+        self.prev_qz = None
+        self.prev_sigma_y = None
+        self.prev_sigma_z = None
         self.prev_ex = 0.0
         self.target_lost_count = 0
 
+    def _finish(self):
+        self.state = State.DONE
+        self.get_logger().info(f'[{self.filter_type}] Finishing — shutting down in 3s')
+        self.create_timer(3.0, lambda: os.kill(os.getpid(), signal.SIGINT))
+
     def _publish_debug_target(self, nt):
-        t = self.drone_pos + 10.0 * nt
+        assumed_dist = 10.0
+        target_est = self.drone_pos + assumed_dist * nt
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'map'
-        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = float(t[0]), float(t[1]), float(t[2])
+        msg.pose.position.x = float(target_est[0])
+        msg.pose.position.y = float(target_est[1])
+        msg.pose.position.z = float(target_est[2])
         self.target_pos_pub.publish(msg)
 
-    # ── PX4 commands ──
-    def _pub_position(self, pos, yaw=0.0):
+    # ── PX4 command helpers ──────────────────────────────────
+    def _pub_pos(self, pos, yaw=0.0):
         msg = TrajectorySetpoint()
         msg.position = [float(pos[0]), float(pos[1]), float(pos[2])]
         msg.yaw = float(yaw)
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.traj_pub.publish(msg)
 
-    def _pub_velocity(self, vel, yaw=0.0):
+    def _pub_vel(self, vel, yaw=0.0):
         msg = TrajectorySetpoint()
         msg.position = [float('nan'), float('nan'), float('nan')]
         msg.velocity = [float(vel[0]), float(vel[1]), float(vel[2])]
@@ -681,9 +785,9 @@ class IBVSPNGController(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.traj_pub.publish(msg)
 
-    def _pub_command(self, command, p1=0.0, p2=0.0):
+    def _pub_cmd(self, cmd, p1=0.0, p2=0.0):
         msg = VehicleCommand()
-        msg.param1, msg.param2, msg.command = p1, p2, command
+        msg.param1, msg.param2, msg.command = p1, p2, cmd
         msg.target_system, msg.target_component = self.system_id, 1
         msg.source_system, msg.source_component, msg.from_external = 1, 1, True
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
@@ -692,7 +796,7 @@ class IBVSPNGController(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = IBVSPNGController()
+    node = InterceptionController()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
