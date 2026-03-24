@@ -24,7 +24,7 @@ class MissionState(Enum):
 
 class BalloonHunterDroneManager(Node):
     def __init__(self):
-        super().__init__("balloon_hunter_drone_manager")
+        super().__init__("drone_manager")
 
         # Parameters
         self.declare_parameter('system_id', 1)
