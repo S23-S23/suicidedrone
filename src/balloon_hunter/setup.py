@@ -23,7 +23,7 @@ setup(
         # 드론 모델 메쉬 파일 (meshes) 추가
         (os.path.join('share', package_name, 'models', 'typhoon_h480', 'meshes'), 
             glob('models/typhoon_h480/meshes/*.stl')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml') if os.path.exists('config') else []),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml') + glob('config/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -38,6 +38,9 @@ setup(
             'position_estimator = balloon_hunter.position_estimator:main',
             'drone_manager = balloon_hunter.drone_manager:main',
             'collision_handler = balloon_hunter.collision_handler:main',
+            'drone_visualizer = balloon_hunter.drone_visualizer:main',
+            'ground_truth_target_provider = balloon_hunter.ground_truth_target_provider:main',
+            'gt_balloon_detector = balloon_hunter.gt_balloon_detector:main',
         ],
     },
 )

@@ -57,7 +57,7 @@ def generate_launch_description():
     drone_manager = Node(
         package='balloon_hunter',
         executable='drone_manager',
-        name='balloon_hunter_drone_manager',
+        name='drone_manager',
         output='screen',
         parameters=[{
             'system_id': LaunchConfiguration('drone_id'),
