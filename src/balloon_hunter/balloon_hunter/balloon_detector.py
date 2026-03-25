@@ -1,174 +1,166 @@
 #!/usr/bin/env python3
 """
-Balloon Detector Node using YOLO
-Detects red balloons from camera feed using YOLOv8
-Based on yolov8_ros2_pt.py
+Balloon Detector Node using OpenCV HSV color detection
+Detects red balloons from camera feed using color thresholding.
+Output format is identical to the YOLO version (Yolov8Inference + bounding box).
+
+Detection runs on a fixed 10 Hz ROS timer — completely decoupled from camera Hz.
+The camera callback stores frames into a time-stamped queue.
+The timer publishes a result for the frame that arrived ~delay_ms ago,
+simulating realistic image-processing latency for DKF evaluation.
 """
 
-import torch
-from ultralytics import YOLO
+import collections
+import numpy as np
+import cv2
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from yolov8_msgs.msg import InferenceResult, Yolov8Inference
-import cv2
 
 bridge = CvBridge()
+
+# Red color ranges in HSV (two ranges because red wraps around H=0/180)
+RED_LOWER1 = np.array([0,   100, 60])
+RED_UPPER1 = np.array([10,  255, 255])
+RED_LOWER2 = np.array([160, 100, 60])
+RED_UPPER2 = np.array([180, 255, 255])
+
+# Minimum contour area to count as a detection (filters noise)
+MIN_AREA = 200
 
 
 class BalloonDetector(Node):
     def __init__(self):
         super().__init__('balloon_detector')
 
-        # Parameters
         self.declare_parameter('system_id', 1)
         self.declare_parameter('camera_topic', '/drone1/camera/image_raw')
-        self.declare_parameter('model_path', '/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt')
-        self.declare_parameter('conf', 0.5)  # Confidence threshold
-        self.declare_parameter('target_class', 'sports ball')  # Red balloon class in COCO dataset
+        self.declare_parameter('detect_hz', 10.0)
+        self.declare_parameter('processing_delay_ms', 200.0)  # simulated processing delay
 
-        self.system_id = self.get_parameter('system_id').value
+        self.system_id    = self.get_parameter('system_id').value
         self.camera_topic = self.get_parameter('camera_topic').value
-        model_path = self.get_parameter('model_path').value
-        self.conf = self.get_parameter('conf').value
-        self.target_class = self.get_parameter('target_class').value
+        detect_hz         = self.get_parameter('detect_hz').value
+        self._delay_s     = self.get_parameter('processing_delay_ms').value / 1000.0
 
-        # Load YOLO model
-        self.get_logger().info(f'Loading YOLO model from: {model_path}')
-        self.model = YOLO(model_path)
+        # Ring buffer: deque of (wall_time_s, Image msg)
+        self._frame_buf = collections.deque(maxlen=60)  # ~2 s at 30 Hz
 
-        # Try to use GPU if available
-        if torch.cuda.is_available():
-            self.device = 'cuda:0'
-            self.model.to('cuda:0')
-            self.get_logger().info('Using GPU (CUDA)')
-        else:
-            self.device = 'cpu'
-            self.get_logger().info('Using CPU (GPU not available)')
-
-        # Get target class ID
-        names = self.model.names
-        if isinstance(names, dict):
-            matching_classes = [k for k, v in names.items() if self.target_class.lower() in v.lower()]
-            if matching_classes:
-                self.target_cls_id = matching_classes[0]
-            else:
-                self.get_logger().warn(f'Target class "{self.target_class}" not found, using all classes')
-                self.target_cls_id = None
-        else:
-            matching_classes = [i for i, v in enumerate(names) if self.target_class.lower() in v.lower()]
-            if matching_classes:
-                self.target_cls_id = matching_classes[0]
-            else:
-                self.target_cls_id = None
-
-        self.get_logger().info(f'Target class: {self.target_class}, ID: {self.target_cls_id}, conf={self.conf}')
-
-        # QoS Profile
-        qos_profile = QoSProfile(
+        # QoS: depth=1, always keep only the latest frame
+        qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=1
         )
 
-        # Subscriber
         self.image_sub = self.create_subscription(
-            Image,
-            self.camera_topic,
-            self.camera_callback,
-            qos_profile
+            Image, self.camera_topic, self._store_frame, qos
         )
 
-        # Publishers
         self.yolov8_pub = self.create_publisher(
-            Yolov8Inference,
-            f'/Yolov8_Inference_{self.system_id}',
-            10
+            Yolov8Inference, f'/Yolov8_Inference_{self.system_id}', 10
         )
-
         self.img_pub = self.create_publisher(
-            Image,
-            f'/inference_result_{self.system_id}',
-            10
+            Image, f'/inference_result_{self.system_id}', 10
         )
 
-        self.get_logger().info('Balloon Detector initialized')
-        self.get_logger().info(f'Subscribing to: {self.camera_topic}')
+        # Fixed-rate detection timer — independent of camera publish rate
+        self.create_timer(1.0 / detect_hz, self._detect)
 
-    def camera_callback(self, msg: Image):
-        """Process camera images with YOLO"""
+        self.get_logger().info(
+            f'Balloon Detector (OpenCV HSV) initialized | '
+            f'topic={self.camera_topic} | detect_hz={detect_hz:.1f} | '
+            f'processing_delay={self._delay_s*1000:.0f}ms'
+        )
+
+    # ── camera callback: push frame + arrival time into ring buffer ───────
+    def _store_frame(self, msg: Image):
+        now = self.get_clock().now().nanoseconds / 1e9
+        self._frame_buf.append((now, msg))
+        self.get_logger().info(
+            '[DEBUG] Balloon detector: Camera callback triggered',
+            throttle_duration_sec=5.0
+        )
+
+    # ── 10 Hz timer: publish detection for a frame captured ~delay_s ago ─
+    def _detect(self):
+        if not self._frame_buf:
+            return   # no frame received yet
+
+        now = self.get_clock().now().nanoseconds / 1e9
+
+        # Find the newest frame that is at least _delay_s old
+        msg = None
+        for t, m in reversed(self._frame_buf):
+            if now - t >= self._delay_s:
+                msg = m
+                break
+
+        if msg is None:
+            # All frames are too recent; nothing to publish yet (still warming up)
+            return
+
         try:
-            self.get_logger().info('[DEBUG] Balloon detector: Camera callback triggered', throttle_duration_sec=5.0)
-            # Convert ROS Image to OpenCV
             cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-            # Run YOLO inference
-            results = self.model.predict(
-                source=cv_image,
-                conf=self.conf,
-                device=self.device,
-                verbose=False
-            )
+            # ── Red HSV detection ──────────────────────────────────────────
+            hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+            mask1 = cv2.inRange(hsv, RED_LOWER1, RED_UPPER1)
+            mask2 = cv2.inRange(hsv, RED_LOWER2, RED_UPPER2)
+            mask  = cv2.bitwise_or(mask1, mask2)
 
-            # Process results
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  kernel, iterations=1)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            valid = [c for c in contours if cv2.contourArea(c) >= MIN_AREA]
+            # ──────────────────────────────────────────────────────────────
+
             yolov8_inference = Yolov8Inference()
             yolov8_inference.header = msg.header
 
-            if results and len(results) > 0:
-                result = results[0]
-                boxes = result.boxes
+            if valid:
+                best = max(valid, key=cv2.contourArea)
+                x1, y1, w, h = cv2.boundingRect(best)
+                x2, y2 = x1 + w, y1 + h
 
-                if boxes is not None and len(boxes) > 0:
-                    for box in boxes:
-                        # Get box coordinates
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        conf = float(box.conf[0].cpu().numpy())
-                        cls_id = int(box.cls[0].cpu().numpy())
+                ir = InferenceResult()
+                ir.class_name = 'red_balloon'
+                ir.left   = x1
+                ir.top    = y1
+                ir.right  = x2
+                ir.bottom = y2
+                yolov8_inference.yolov8_inference.append(ir)
 
-                        # Filter by target class if specified
-                        if self.target_cls_id is not None and cls_id != self.target_cls_id:
-                            continue
+                cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(cv_image, 'red_balloon', (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-                        # Create InferenceResult
-                        inference_result = InferenceResult()
-                        inference_result.class_name = self.model.names[cls_id]
-                        inference_result.left = int(x1)
-                        inference_result.top = int(y1)
-                        inference_result.right = int(x2)
-                        inference_result.bottom = int(y2)
-
-                        yolov8_inference.yolov8_inference.append(inference_result)
-
-                        # Draw on image
-                        cv2.rectangle(cv_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-                        label = f'{inference_result.class_name}: {conf:.2f}'
-                        cv2.putText(cv_image, label, (int(x1), int(y1) - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
-            # Publish results
-            if len(yolov8_inference.yolov8_inference) > 0:
+            if yolov8_inference.yolov8_inference:
                 self.yolov8_pub.publish(yolov8_inference)
                 det = yolov8_inference.yolov8_inference[0]
                 self.get_logger().info(
-                    f'[DEBUG] Publishing detection: {len(yolov8_inference.yolov8_inference)} target(s), bbox=({det.left},{det.top},{det.right},{det.bottom}), topic=/Yolov8_Inference_{self.system_id}',
+                    f'[DEBUG] Publishing detection: 1 target(s), '
+                    f'bbox=({det.left},{det.top},{det.right},{det.bottom}), '
+                    f'topic=/Yolov8_Inference_{self.system_id}',
                     throttle_duration_sec=1.0
                 )
 
-            # Publish visualization
             img_msg = bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
             img_msg.header = msg.header
             self.img_pub.publish(img_msg)
 
         except Exception as e:
-            self.get_logger().error(f'Error in camera callback: {str(e)}')
+            self.get_logger().error(f'Error in _detect: {str(e)}')
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = BalloonDetector()
-
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

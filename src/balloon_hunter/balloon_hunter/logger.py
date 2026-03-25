@@ -20,7 +20,7 @@ from datetime import datetime
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from px4_msgs.msg import Monitoring
+from px4_msgs.msg import Monitoring, VehicleLocalPosition, VehicleAngularVelocity
 from yolov8_msgs.msg import Yolov8Inference
 from geometry_msgs.msg import PoseStamped
 
@@ -37,9 +37,9 @@ class FilterLogger(Node):
 
         self.declare_parameter('filter_type', 'DKF')
         self.declare_parameter('system_id', 1)
-        self.declare_parameter('target_gazebo_x', 7.0)
-        self.declare_parameter('target_gazebo_y', 10.0)
-        self.declare_parameter('target_gazebo_z', 2.0)
+        self.declare_parameter('target_gazebo_x', 2.0)
+        self.declare_parameter('target_gazebo_y', 5.0)
+        self.declare_parameter('target_gazebo_z', 5.0)
         self.declare_parameter('fx', 454.8)
         self.declare_parameter('fy', 454.8)
         self.declare_parameter('cx', 424.0)
@@ -99,8 +99,17 @@ class FilterLogger(Node):
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=10)
 
         # Subs
+        sys_id = self.get_parameter('system_id').value
         self.create_subscription(Monitoring, self.get_parameter('monitoring_topic').value, self.mon_cb, qos)
         self.create_subscription(Yolov8Inference, self.get_parameter('detection_topic').value, self.det_cb, 10)
+        self.create_subscription(
+            VehicleLocalPosition, f'drone{sys_id}/fmu/out/vehicle_local_position',
+            self._vlp_cb, qos
+        )
+        self.create_subscription(
+            VehicleAngularVelocity, f'drone{sys_id}/fmu/out/vehicle_angular_velocity',
+            self._avel_cb, qos
+        )
 
         # Timer 50Hz
         self.create_timer(0.02, self.log_cb)
@@ -121,6 +130,12 @@ class FilterLogger(Node):
         self.drone_roll = getattr(msg, 'roll', 0.0)
         if hasattr(msg, 'rollspeed'):
             self.drone_omega = np.array([msg.rollspeed, msg.pitchspeed, msg.yawspeed])
+
+    def _vlp_cb(self, msg: VehicleLocalPosition):
+        self.drone_vel = np.array([msg.vx, msg.vy, msg.vz])
+
+    def _avel_cb(self, msg: VehicleAngularVelocity):
+        self.drone_omega = np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
 
     def det_cb(self, msg: Yolov8Inference):
         if not msg.yolov8_inference: return

@@ -327,7 +327,7 @@ class InterceptionController(Node):
         # ── Parameters ──
         self.declare_parameter('system_id', 1)
         self.declare_parameter('filter_type', 'DKF')
-        self.declare_parameter('takeoff_height', 6.0)
+        self.declare_parameter('takeoff_height', 5.0)
 
         # Camera intrinsics
         self.declare_parameter('fx', 454.8)
@@ -339,7 +339,9 @@ class InterceptionController(Node):
         # PNG parameters (Eq. 9, Yan et al.)
         self.declare_parameter('K_y', 3.0)
         self.declare_parameter('K_z', 3.0)
-        self.declare_parameter('k_a', 2.0)        # velocity gain (Eq. 14)
+        self.declare_parameter('k_a', 1.0)        # velocity gain (Eq. 14)
+        self.declare_parameter('vel_smooth_alpha', 0.7)  # velocity smoothing (0~1, lower=smoother)
+        self.declare_parameter('sigma_max', 1.57)  # sigma clamp (rad, ~90 deg)
 
         # Yaw PD (Eq. 13)
         self.declare_parameter('kp_yaw', 0.01)
@@ -375,6 +377,8 @@ class InterceptionController(Node):
         self.Ky = self.get_parameter('K_y').value
         self.Kz = self.get_parameter('K_z').value
         self.ka = self.get_parameter('k_a').value
+        self.vel_alpha = self.get_parameter('vel_smooth_alpha').value
+        self.sigma_max = self.get_parameter('sigma_max').value
         self.kp_yaw = self.get_parameter('kp_yaw').value
         self.kd_yaw = self.get_parameter('kd_yaw').value
         self.max_speed = self.get_parameter('max_speed').value
@@ -428,9 +432,10 @@ class InterceptionController(Node):
         # PNG state (Eq. 9)
         self.prev_qy = None
         self.prev_qz = None
-        self.prev_sigma_y = None
-        self.prev_sigma_z = None
+        self.prev_sigma_yd = None
+        self.prev_sigma_zd = None
         self.prev_ex = 0.0
+        self.prev_vd = None  # for velocity smoothing
 
         # Target position (from target_mover or known)
         self.target_world_pos = None
@@ -504,11 +509,19 @@ class InterceptionController(Node):
         self.drone_roll = msg.roll
 
     def vlp_cb(self, msg: VehicleLocalPosition):
-        if msg.v_xy_valid and msg.v_z_valid:
-            self.drone_vel = np.array([msg.vx, msg.vy, msg.vz])
+        self.drone_vel = np.array([msg.vx, msg.vy, msg.vz])
+        self.get_logger().info(
+            f'[VLP] vel=({msg.vx:.2f},{msg.vy:.2f},{msg.vz:.2f}) '
+            f'valid_xy={msg.v_xy_valid} valid_z={msg.v_z_valid}',
+            throttle_duration_sec=2.0
+        )
 
     def avel_cb(self, msg: VehicleAngularVelocity):
         self.drone_omega = np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
+        self.get_logger().info(
+            f'[AVEL] omega=({msg.xyz[0]:.3f},{msg.xyz[1]:.3f},{msg.xyz[2]:.3f})',
+            throttle_duration_sec=2.0
+        )
 
     def det_cb(self, msg: Yolov8Inference):
         if not msg.yolov8_inference:
@@ -560,8 +573,9 @@ class InterceptionController(Node):
             self.est_pub.publish(msg)
 
         # Track target loss
-        if not self.target_detected: #??
+        if not self.target_detected:
             self.target_lost_count += 1
+        self.target_detected = False  # reset each tick; detection callback sets True
 
         # State machine
         if self.state == State.IDLE:
@@ -618,8 +632,8 @@ class InterceptionController(Node):
             self.state = State.INTERCEPT
             return
 
-        # Fly forward (positive Y in NED = forward in typical Gazebo setup)
-        self._pub_pos([5.0, 0.0, -self.takeoff_height])
+        # Fly toward target (target is at east, +Y in NED)
+        self._pub_pos([0.0, 5.0, -self.takeoff_height])
 
     def _intercept(self):
         """Core IBVS + PNG controller (Yan et al. 2025, Eq. 3-14)."""
@@ -671,7 +685,7 @@ class InterceptionController(Node):
         # ── LOS direction from image (Eq. 5) ──
         ray_cam = np.array([ex, ey, self.foc])
         ray_body = self.R_b_c @ ray_cam
-        R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val)
+        R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val) @ rot_x(self.drone_roll)
         ray_ned = R_e_b @ ray_body
         nt = normalize(ray_ned)
 
@@ -692,20 +706,25 @@ class InterceptionController(Node):
             sigma_z = qz
 
         # ── PNG desired velocity angle (Eq. 9) ──
+        # σ_yd(k) = σ_yd(k-1) + K_y * (q_y(k) - q_y(k-1))
+        # Base is PREVIOUS DESIRED sigma, not current actual sigma.
         if self.prev_qy is not None:
             delta_qy = wrap_angle(qy - self.prev_qy)
             delta_qz = wrap_angle(qz - self.prev_qz)
-            sigma_yd = self.Ky * delta_qy + self.prev_sigma_y
-            sigma_zd = self.Kz * delta_qz + self.prev_sigma_z
+            sigma_yd = self.prev_sigma_yd + self.Ky * delta_qy
+            sigma_zd = self.prev_sigma_zd + self.Kz * delta_qz
         else:
-            # First iteration: initialise desired velocity angle to current velocity angle
             sigma_yd = sigma_y
             sigma_zd = sigma_z
 
+        # ── Sigma clamping ──
+        sigma_yd = clamp(sigma_yd, -self.sigma_max, self.sigma_max)
+        sigma_zd = clamp(sigma_zd, -self.sigma_max, self.sigma_max)
+
+        self.prev_sigma_yd = sigma_yd
+        self.prev_sigma_zd = sigma_zd
         self.prev_qy = qy
         self.prev_qz = qz
-        self.prev_sigma_y = sigma_yd
-        self.prev_sigma_z = sigma_zd
 
         # ── Desired velocity direction (Eq. 10) ──
         cos_sy = math.cos(sigma_yd)
@@ -716,7 +735,7 @@ class InterceptionController(Node):
         ]))
 
         # ── Desired speed (Eq. 14) ──
-        vd_mag = clamp(speed + self.ka, 1.0, self.max_speed)
+        vd_mag = clamp(speed + self.ka * 0.02, 1.0, self.max_speed)
         vd = vd_mag * nvd
 
         # ── Yaw PD controller (Eq. 13) ──
@@ -725,6 +744,11 @@ class InterceptionController(Node):
         self.prev_ex = ex
         desired_yaw = wrap_angle(self.drone_yaw + yaw_rate_cmd * 0.02)
 
+        # ── Velocity smoothing (exponential moving average) ──
+        if self.prev_vd is not None:
+            vd = self.vel_alpha * vd + (1.0 - self.vel_alpha) * self.prev_vd
+        self.prev_vd = vd.copy()
+
         # ── Publish velocity command ──
         self._pub_vel(vd, desired_yaw)
 
@@ -732,8 +756,9 @@ class InterceptionController(Node):
         self.get_logger().info(
             f'[{self.filter_type}] e=({ex:.0f},{ey:.0f}) '
             f'q=({math.degrees(qy):.1f},{math.degrees(qz):.1f})deg '
-            f'v={speed:.1f} vd={vd_mag:.1f}m/s '
-            f'w=({self.drone_omega[0]:.2f},{self.drone_omega[1]:.2f},{self.drone_omega[2]:.2f})',
+            f'sig=({math.degrees(sigma_yd):.1f},{math.degrees(sigma_zd):.1f})deg '
+            f'v={speed:.1f} vd=({vd[0]:.2f},{vd[1]:.2f},{vd[2]:.2f}) '
+            f'nvd=({nvd[0]:.2f},{nvd[1]:.2f},{nvd[2]:.2f})',
             throttle_duration_sec=0.5
         )
 
@@ -748,9 +773,10 @@ class InterceptionController(Node):
     def _init_png_state(self):
         self.prev_qy = None
         self.prev_qz = None
-        self.prev_sigma_y = None
-        self.prev_sigma_z = None
+        self.prev_sigma_yd = None
+        self.prev_sigma_zd = None
         self.prev_ex = 0.0
+        self.prev_vd = None
         self.target_lost_count = 0
 
     def _finish(self):

@@ -46,7 +46,7 @@ def graph1_coordinates(dkf, ekf, out):
     # DKF subplot
     ax = axes[0]
     ax.set_title('DKF Experiment: Image Coordinate (u-axis)', fontsize=13)
-    ax.scatter(dkf['timestamp_s'].values, dkf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='YOLO raw')
+#    ax.scatter(dkf['timestamp_s'].values, dkf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='YOLO raw')
     ax.plot(dkf['timestamp_s'].values, dkf['u_gt'].values, linewidth=1.5, color='#2ecc71', linestyle='--', label='Ground Truth')
     ax.plot(dkf['timestamp_s'].values, dkf['u_est'].values, linewidth=1.2, color='#2980b9', label='DKF estimate')
     ax.axhline(y=424, color='orange', linestyle=':', alpha=0.5, label='Image center')
@@ -55,7 +55,7 @@ def graph1_coordinates(dkf, ekf, out):
     # EKF subplot
     ax = axes[1]
     ax.set_title('EKF Experiment: Image Coordinate (u-axis)', fontsize=13)
-    ax.scatter(ekf['timestamp_s'].values, ekf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='YOLO raw')
+    #ax.scatter(ekf['timestamp_s'].values, ekf['u_yolo'].values, s=6, alpha=0.3, color='gray', label='YOLO raw')
     ax.plot(ekf['timestamp_s'].values, ekf['u_gt'].values, linewidth=1.5, color='#2ecc71', linestyle='--', label='Ground Truth')
     ax.plot(ekf['timestamp_s'].values, ekf['u_est'].values, linewidth=1.2, color='#e74c3c', label='EKF estimate')
     ax.axhline(y=424, color='orange', linestyle=':', alpha=0.5, label='Image center')
