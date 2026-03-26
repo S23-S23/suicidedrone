@@ -39,7 +39,7 @@ from px4_msgs.msg import (
 )
 from geometry_msgs.msg import PoseStamped, Point
 from yolov8_msgs.msg import Yolov8Inference
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, String
 from enum import Enum
 
 
@@ -352,7 +352,7 @@ class InterceptionController(Node):
         # Filter parameters
         self.declare_parameter('dkf_dt', 0.02)
         self.declare_parameter('dkf_delay_steps', 10)  # 200ms / 20ms = 10 steps
-        self.declare_parameter('assumed_depth', 10.0)   # pzc for image Jacobian
+        self.declare_parameter('assumed_depth', 7.0)   # pzc for image Jacobian
 
         # Mission
         self.declare_parameter('mission_timeout', 60.0)
@@ -396,7 +396,12 @@ class InterceptionController(Node):
         ], dtype=float) @ rot_x(-self.cam_pitch)
 
         # ── Create filter ──
-        if self.filter_type == 'DKF':
+        if self.filter_type == 'GT':
+            self.filt = None
+            self._gt_pixel = None       # [u, v, u_dot, v_dot]
+            self._gt_prev_uv = None     # previous [u, v] for numerical diff
+            self._gt_dt = dkf_dt        # 0.02s (50Hz)
+        elif self.filter_type == 'DKF':
             self.filt = DelayedKalmanFilter(
                 self.foc, self.R_b_c, dkf_dt, dkf_delay,
                 assumed_depth=assumed_depth, max_history=dkf_delay + 20
@@ -424,6 +429,7 @@ class InterceptionController(Node):
         self.target_detected = False
         self.target_lost_count = 0
         self.target_lost_threshold = 50   # 50 ticks at 50Hz = 1s
+        self._det_tick = 0                # detection freshness counter
 
         # PNG state (Eq. 9)
         self.prev_qy = None
@@ -431,6 +437,12 @@ class InterceptionController(Node):
         self.prev_sigma_y = None
         self.prev_sigma_z = None
         self.prev_ex = 0.0
+
+        # ── Velocity buffering (PNG → PX4 safety layer) ──────────
+        # Limits acceleration so PX4 doesn't command extreme attitudes
+        self._prev_cmd_vel = np.zeros(3)   # last velocity sent to PX4
+        self.MAX_ACCEL = 4.0               # m/s² max velocity change rate
+        self.INITIAL_SPEED = 3.5           # m/s  starting speed for ramp-up
 
         # Target position (from target_mover or known)
         self.target_world_pos = None
@@ -453,6 +465,7 @@ class InterceptionController(Node):
         )
         self.est_pub = self.create_publisher(Float32MultiArray, '/filter_estimate', 10)
         self.target_pos_pub = self.create_publisher(PoseStamped, '/ibvs_target_position', 10)
+        self.state_pub = self.create_publisher(String, '/mission_state', 10)
 
         # ── Subscribers ──
         self.create_subscription(
@@ -516,9 +529,21 @@ class InterceptionController(Node):
         det = msg.yolov8_inference[0]
         u = (det.left + det.right) * 0.5
         v = (det.top + det.bottom) * 0.5
-        self.filt.update(np.array([u, v]))
+
+        if self.filter_type == 'GT':
+            uv = np.array([u, v])
+            if self._gt_prev_uv is not None:
+                duv = (uv - self._gt_prev_uv) / self._gt_dt
+            else:
+                duv = np.zeros(2)
+            self._gt_prev_uv = uv.copy()
+            self._gt_pixel = np.array([u, v, duv[0], duv[1]])
+        else:
+            self.filt.update(np.array([u, v]))
+
         self.target_detected = True
         self.target_lost_count = 0
+        self._det_tick = 0  # reset freshness counter
 
     def _target_pos_cb(self, msg: Point):
         self.target_world_pos = np.array([msg.x, msg.y, msg.z])
@@ -542,25 +567,34 @@ class InterceptionController(Node):
 
     # ── Main control loop (50Hz) ─────────────────────────────
     def control_cb(self):
+        state_msg = String()
+        state_msg.data = self.state.name
+        self.state_pub.publish(state_msg)
+
         R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val) @ rot_x(self.drone_roll)
 
-        # Filter predict step (both DKF and EKF use IMU)
-        if self.filt.initialized:
-            self.filt.predict(
-                omega_body=self.drone_omega,
-                vel_ned=self.drone_vel,
-                R_e_b=R_e_b
-            )
+        # Filter predict step (DKF/EKF use IMU; GT bypasses filter entirely)
+        if self.filter_type == 'GT':
+            est = self._gt_pixel
+        else:
+            if self.filt.initialized:
+                self.filt.predict(
+                    omega_body=self.drone_omega,
+                    vel_ned=self.drone_vel,
+                    R_e_b=R_e_b
+                )
+            est = self.filt.get_pixel()
 
-        # Publish filter estimate for logger
-        est = self.filt.get_pixel()
+        # Publish estimate for logger
         if est is not None:
             msg = Float32MultiArray()
             msg.data = [float(est[0]), float(est[1]), float(est[2]), float(est[3])]
             self.est_pub.publish(msg)
 
-        # Track target loss
-        if not self.target_detected: #??
+        # Track target loss: _det_tick increments every control tick,
+        # reset to 0 in det_cb when a new detection arrives
+        self._det_tick += 1
+        if self._det_tick > 2:  # no detection for >2 ticks (~40ms)
             self.target_lost_count += 1
 
         # State machine
@@ -611,7 +645,8 @@ class InterceptionController(Node):
 
     def _search(self):
         """Fly forward until target is detected."""
-        if self.target_detected and self.filt.initialized:
+        filter_ready = (self._gt_pixel is not None) if self.filter_type == 'GT' else self.filt.initialized
+        if self.target_detected and filter_ready:
             self.get_logger().info(f'Target acquired ({self.filter_type}) -> INTERCEPT')
             self._init_png_state()
             self._mission_start_t = time.time()
@@ -623,6 +658,7 @@ class InterceptionController(Node):
 
     def _intercept(self):
         """Core IBVS + PNG controller (Yan et al. 2025, Eq. 3-14)."""
+        DT = 0.02  # control period (50Hz)
 
         # ── Mission timeout ──
         if self._mission_start_t and \
@@ -633,9 +669,6 @@ class InterceptionController(Node):
 
         # ── Collision detection ──
         if self.target_world_pos is not None:
-            # target_world_pos is in Gazebo frame (x, y, z)
-            # drone_pos is in NED (x=north, y=east, z=down)
-            # Gazebo: x=north, y=east, z=up → NED: same x,y but z=-z_gazebo
             target_ned = np.array([
                 self.target_world_pos[0],
                 self.target_world_pos[1],
@@ -654,12 +687,18 @@ class InterceptionController(Node):
             self.get_logger().warn('Target lost! -> SEARCH')
             self.target_detected = False
             self.prev_qy = None
+            self._prev_cmd_vel = np.zeros(3)
             self.state = State.SEARCH
             return
 
-        est = self.filt.get_pixel()
+        if self.filter_type == 'GT':
+            est = self._gt_pixel
+        else:
+            est = self.filt.get_pixel()
         if est is None:
-            self._pub_vel([0.0, 0.0, 0.0], self.drone_yaw)
+            # ── [완충] 데이터 없으면 감속하며 대기 ──
+            self._prev_cmd_vel *= 0.9
+            self._pub_vel(self._prev_cmd_vel, self.drone_yaw)
             return
 
         u_est, v_est = est[0], est[1]
@@ -667,6 +706,18 @@ class InterceptionController(Node):
         # ── Image error (Eq. 3) ──
         ex = u_est - self.cx
         ey = v_est - self.cy
+
+        # ── [완충] stale detection 무시: FOV 밖 pixel이면 PNG 업데이트 금지 ──
+        stale = self._det_tick > 10  # 200ms 이상 감지 없음 (20Hz det 기준 ~4회 미수신)
+        if stale:
+            # 마지막 명령 속도를 유지 (방향 유지, 거의 감속 없음)
+            self._prev_cmd_vel *= 0.995
+            self._pub_vel(self._prev_cmd_vel, self.drone_yaw)
+            self.get_logger().info(
+                f'[{self.filter_type}] stale det ({self._det_tick} ticks), coasting',
+                throttle_duration_sec=0.5
+            )
+            return
 
         # ── LOS direction from image (Eq. 5) ──
         ray_cam = np.array([ex, ey, self.foc])
@@ -698,7 +749,6 @@ class InterceptionController(Node):
             sigma_yd = self.Ky * delta_qy + self.prev_sigma_y
             sigma_zd = self.Kz * delta_qz + self.prev_sigma_z
         else:
-            # First iteration: initialise desired velocity angle to current velocity angle
             sigma_yd = sigma_y
             sigma_zd = sigma_z
 
@@ -716,14 +766,29 @@ class InterceptionController(Node):
         ]))
 
         # ── Desired speed (Eq. 14) ──
-        vd_mag = clamp(speed + self.ka, 1.0, self.max_speed)
-        vd = vd_mag * nvd
+        # ── [완충] 초기 ramp-up: 처음에는 낮은 속도부터 시작 ──
+        vd_mag = clamp(speed + self.ka, self.INITIAL_SPEED, self.max_speed)
+        vd_raw = vd_mag * nvd
 
-        # ── Yaw PD controller (Eq. 13) ──
-        ex_dot = (ex - self.prev_ex) / 0.02
-        yaw_rate_cmd = self.kp_yaw * ex + self.kd_yaw * ex_dot
-        self.prev_ex = ex
-        desired_yaw = wrap_angle(self.drone_yaw + yaw_rate_cmd * 0.02)
+        # ══════════════════════════════════════════════════════════
+        # ── [완충] Acceleration limiting (논문 Eq.17-23 attitude
+        #    controller 대체) ──
+        #    PX4 velocity controller가 극단적 attitude를 생성하지
+        #    않도록 매 틱 velocity 변화량을 MAX_ACCEL * DT로 제한.
+        #    논문의 sat(ω, ωm) (Eq. 23)와 동일한 역할.
+        # ══════════════════════════════════════════════════════════
+        dv = vd_raw - self._prev_cmd_vel
+        dv_norm = np.linalg.norm(dv)
+        max_dv = self.MAX_ACCEL * DT  # 최대 허용 속도 변화 (m/s per tick)
+        if dv_norm > max_dv:
+            dv = dv * (max_dv / dv_norm)
+        vd = self._prev_cmd_vel + dv
+        self._prev_cmd_vel = vd.copy()
+
+        # ── Yaw: LOS 방향으로 직접 설정 ──
+        # ── [완충] pixel error 기반 PD 대신, NED LOS 방향으로 yaw 설정.
+        #    PX4가 yaw 변화를 자체 rate limit으로 부드럽게 처리. ──
+        desired_yaw = math.atan2(nt[1], nt[0])  # NED에서 LOS 방향
 
         # ── Publish velocity command ──
         self._pub_vel(vd, desired_yaw)
@@ -732,12 +797,11 @@ class InterceptionController(Node):
         self.get_logger().info(
             f'[{self.filter_type}] e=({ex:.0f},{ey:.0f}) '
             f'q=({math.degrees(qy):.1f},{math.degrees(qz):.1f})deg '
-            f'v={speed:.1f} vd={vd_mag:.1f}m/s '
+            f'v={speed:.1f} vd={np.linalg.norm(vd):.1f}m/s '
             f'w=({self.drone_omega[0]:.2f},{self.drone_omega[1]:.2f},{self.drone_omega[2]:.2f})',
             throttle_duration_sec=0.5
         )
 
-        # Debug target direction visualization
         self._publish_debug_target(nt)
 
     def _done(self):
@@ -752,6 +816,8 @@ class InterceptionController(Node):
         self.prev_sigma_z = None
         self.prev_ex = 0.0
         self.target_lost_count = 0
+        self._prev_cmd_vel = self.drone_vel.copy()  # 현재 속도부터 시작
+        self._det_tick = 0
 
     def _finish(self):
         self.state = State.DONE

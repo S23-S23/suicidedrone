@@ -60,9 +60,17 @@
 
     <include>
       <uri>model://red_balloon</uri>
-      <pose>7 10 2 0 0 0</pose>
+      <pose>3 5 5 0 0 0</pose>
       <name>target_balloon</name>
     </include>
+
+    <!-- Publish /gazebo/model_states and /gazebo/link_states -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>30.0</update_rate>
+    </plugin>
 
   </world>
 </sdf>

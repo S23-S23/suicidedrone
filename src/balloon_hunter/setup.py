@@ -23,7 +23,7 @@ setup(
         # 드론 모델 메쉬 파일 (meshes) 추가
         (os.path.join('share', package_name, 'models', 'typhoon_h480', 'meshes'), 
             glob('models/typhoon_h480/meshes/*.stl')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml') if os.path.exists('config') else []),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml') + glob('config/*.rviz')),
         # iris 모델 추가
         (os.path.join('share', package_name, 'models', 'iris'),
             glob('models/iris/*.sdf*') + glob('models/iris/*.config')),
@@ -49,6 +49,8 @@ setup(
             'target_mover = balloon_hunter.target_mover:main',
             'logger = balloon_hunter.logger:main',
             'graph = balloon_hunter.graph:main',
+            'gt_balloon_detector = balloon_hunter.gt_balloon_detector:main',
+            'drone_visualizer = balloon_hunter.drone_visualizer:main',
         ],
     },
 )

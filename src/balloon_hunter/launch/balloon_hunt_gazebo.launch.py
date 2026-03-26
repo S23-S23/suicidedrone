@@ -26,6 +26,7 @@ def launch_setup(context, *args, **kwargs):
     gazebo_classic_path = f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic'
     model_path = LaunchConfiguration('model_path').perform(context)
     filter_type = LaunchConfiguration('filter_type').perform(context)
+    detector_type = LaunchConfiguration('detector_type').perform(context)
     drone_id = 1
 
     # Environment
@@ -117,6 +118,37 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
+    gt_balloon_detector = Node(
+        package='balloon_hunter',
+        executable='gt_balloon_detector',
+        name='balloon_detector',
+        output='screen',
+        parameters=[{
+            'system_id': drone_id,
+            'camera_topic': f'/drone{drone_id}/camera/image_raw',
+            'width': 848,
+            'height': 480,
+            'fx': 454.8,
+            'fy': 454.8,
+            'cx': 424.0,
+            'cy': 240.0,
+            'balloon_model_name': 'target_balloon',
+            'balloon_radius': 0.3,
+            'balloon_link_z_offset': 1.5,
+            'camera_link_name': f'drone{drone_id}::depth_camera_link',
+            'sensor_offset_x': 0.0,
+            'sensor_offset_y': 0.0,
+            'sensor_offset_z': 0.0,
+        }]
+    )
+
+    # Select detector based on launch argument; GT detector forces filter_type=GT
+    if detector_type == 'GT':
+        detector_node = gt_balloon_detector
+        filter_type = 'GT'
+    else:
+        detector_node = balloon_detector
+
     # Controller with filter_type from launch argument
     drone_manager = Node(
         package='balloon_hunter',
@@ -186,6 +218,31 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
+    # Drone Visualizer (RViz2: TF, trajectory path, balloon marker)
+    drone_visualizer = Node(
+        package='balloon_hunter',
+        executable='drone_visualizer',
+        name='drone_visualizer',
+        output='screen',
+        parameters=[{
+            'system_id': drone_id,
+            'max_path_points': 5000,
+            'balloon_model_name': 'target_balloon',
+            'balloon_radius': 0.3,
+            'balloon_link_z_offset': 1.5,
+        }]
+    )
+
+    # RViz2
+    rviz_config = os.path.join(current_package_path, 'config', 'drone_trajectory.rviz')
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', rviz_config],
+        output='screen',
+    )
+
     # Event chaining
     start_spawn_drone1 = TimerAction(period=2.0, actions=[spawn_drone1])
 
@@ -198,9 +255,10 @@ def launch_setup(context, *args, **kwargs):
         OnProcessExit(target_action=spawn_drone1, on_exit=[
             TimerAction(period=10.0, actions=[
                 #target_mover,
-                balloon_detector,
+                detector_node,
                 drone_manager,
-                logger,
+                #logger,
+                drone_visualizer,
             ])
         ])
     )
@@ -211,7 +269,8 @@ def launch_setup(context, *args, **kwargs):
         gen_sdf_drone1,
         start_spawn_drone1,
         px4_1_event,
-        mission_nodes_event
+        mission_nodes_event,
+        rviz_node,
     ]
 
 
@@ -220,5 +279,6 @@ def generate_launch_description():
         DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
         DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt'),
         DeclareLaunchArgument('filter_type', default_value='DKF'),
+        DeclareLaunchArgument('detector_type', default_value='YOLO'),
         OpaqueFunction(function=launch_setup)
     ])

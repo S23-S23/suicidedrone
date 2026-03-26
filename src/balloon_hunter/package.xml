@@ -20,6 +20,9 @@
   <depend>cv_bridge</depend>
   <depend>python3-opencv</depend>
   <depend>python3-numpy</depend>
+  <depend>gazebo_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
