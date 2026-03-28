@@ -44,6 +44,7 @@ setup(
             'ibvs_controller = balloon_hunter.ibvs_controller:main',
             'png_guidance = balloon_hunter.png_guidance:main',
             'mission_logger = balloon_hunter.mission_logger:main',
+            'balloon_mover = balloon_hunter.balloon_mover:main',
         ],
     },
 )

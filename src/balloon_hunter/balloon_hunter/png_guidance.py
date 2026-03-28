@@ -172,15 +172,19 @@ class PNGGuidance(Node):
         self.los_received = True
 
     def target_detected_callback(self, msg: Bool):
-        """Reset speed, LOS history, and first-step flag on target re-acquisition."""
+        """Reset LOS history and first-step flag on target re-acquisition.
+        Speed is intentionally NOT reset so the drone immediately resumes
+        at the speed it had when the target was lost, avoiding a slow restart
+        that lets a moving balloon escape."""
         if msg.data and not self.prev_detected:
-            self.v_now = self.v_init
             # Reset LOS history so the first PNG step after re-acquisition
             # uses rate = 0 instead of stale prev values from before target loss
             self.los_received = False
             # Force first-step direct-aim behavior on re-entry
             self.first_guidance_step = True
-            self.get_logger().info('PNG: target re-acquired, speed/LOS/step reset')
+            self.get_logger().info(
+                f'PNG: target re-acquired, speed maintained={self.v_now:.2f} m/s'
+            )
         self.prev_detected = msg.data
 
     # ── Guidance loop ─────────────────────────────────────────────────────────

@@ -60,7 +60,7 @@
 
     <include>
       <uri>model://red_balloon</uri>
-      <pose>3 10 2 0 0 0</pose>
+      <pose>3 15 2 0 0 0</pose>
       <name>target_balloon</name>
     </include>
 

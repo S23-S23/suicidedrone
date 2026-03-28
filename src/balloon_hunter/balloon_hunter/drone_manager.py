@@ -71,6 +71,11 @@ class BalloonHunterDroneManager(Node):
         self.fov_yaw_rate     = 0.0    # [rad/s] from IBVS
         self.collision_done   = False
 
+        # Set when INTERCEPT is entered for the first time.
+        # After that, FORWARD hovers in place instead of returning to origin.
+        self.intercept_entered_once = False
+        self.hover_pos = None           # position to hold when target is lost
+
         # ── Publishers ──────────────────────────────────────────────────────
         self.ocm_publisher = self.create_publisher(
             OffboardControlMode,
@@ -164,10 +169,12 @@ class BalloonHunterDroneManager(Node):
         # causing the transition to be permanently missed.
         if msg.data and self.state == MissionState.FORWARD:
             self.get_logger().info('Target detected! Switching to INTERCEPT.')
+            self.intercept_entered_once = True
             self.state = MissionState.INTERCEPT
 
         if not msg.data and self.state == MissionState.INTERCEPT:
-            self.get_logger().warn('Target lost! Returning to FORWARD.')
+            self.get_logger().warn('Target lost! Hovering in place (FORWARD).')
+            self.hover_pos = self.drone_pos.copy()   # freeze current position
             self.state = MissionState.FORWARD
 
     def fov_yaw_rate_callback(self, msg: Float64):
@@ -197,8 +204,11 @@ class BalloonHunterDroneManager(Node):
     def timer_ocm_callback(self):
         msg           = OffboardControlMode()
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        if self.state == MissionState.INTERCEPT:
-            # Velocity control during INTERCEPT (PNG provides NED velocity)
+        # Once INTERCEPT has been entered, keep velocity mode permanently.
+        # Switching back to position mode during FORWARD hover causes PX4 to
+        # rebuild its velocity controller state, introducing a 0.5–1 s response
+        # lag every time the target is re-acquired.
+        if self.intercept_entered_once or self.state == MissionState.INTERCEPT:
             msg.position = False
             msg.velocity = True
         else:
@@ -278,6 +288,19 @@ class BalloonHunterDroneManager(Node):
             self.state = MissionState.FORWARD
 
     def handle_forward(self):
+        # ── Case A: target was lost during INTERCEPT → hover where we are ──
+        # Stay in velocity mode (OCM already locked to velocity=True) and
+        # command zero velocity.  A position setpoint would switch OCM back
+        # to position mode, causing a 0.5–1 s lag when target is re-acquired.
+        if self.intercept_entered_once:
+            self._publish_velocity_setpoint([0.0, 0.0, 0.0], yawspeed=0.0)
+            self.get_logger().info(
+                '[DEBUG] FORWARD (hover, vel=0)',
+                throttle_duration_sec=2.0,
+            )
+            return
+
+        # ── Case B: initial forward flight before first INTERCEPT ──
         if self.forward_start_pos is None:
             self.forward_start_pos = self.drone_pos.copy()
 

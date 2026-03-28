@@ -140,7 +140,7 @@ def launch_setup(context, *args, **kwargs):
             'cy': 180.0,
             'fov_kp': 1.5,
             'fov_kd': 0.1,
-            'target_timeout': 0.5,
+            'target_timeout': 1.5,
         }]
     )
 
@@ -153,11 +153,11 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'Ky': 1.0,
-            'Kz': 1.0,
-            'ka': 0.2,
-            'v_max': 2.0,
-            'v_init': 0.5,
+            'Ky': LaunchConfiguration('png_Ky'),
+            'Kz': LaunchConfiguration('png_Kz'),
+            'ka': LaunchConfiguration('png_ka'),
+            'v_max': LaunchConfiguration('png_v_max'),
+            'v_init': LaunchConfiguration('png_v_init'),
             'rate': 50.0,
         }]
     )
@@ -226,6 +226,26 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
+    # Balloon Mover
+    # Moves the target balloon when the drone enters FORWARD state.
+    # movement_pattern driven by the 'move' launch argument.
+    balloon_mover = Node(
+        package='balloon_hunter',
+        executable='balloon_mover',
+        name='balloon_mover',
+        output='screen',
+        parameters=[{
+            'balloon_model_name': 'target_balloon',
+            'movement_pattern': LaunchConfiguration('move'),
+            'speed': 1.0,
+            'update_rate': 20.0,
+            'initial_x': 3.0,
+            'initial_y': 15.0,
+            'initial_z': 2.0,
+            'random_interval': 3.0,
+        }]
+    )
+
     return [
         px4_lat, px4_lon,
         resource_path_env, px4_sim_env, model_path_env, plugin_path_env,
@@ -242,6 +262,7 @@ def launch_setup(context, *args, **kwargs):
         drone_visualizer,
         rviz_node,
         mission_logger,
+        balloon_mover,         # moves target balloon on FORWARD state entry
     ]
 
 
@@ -256,6 +277,32 @@ def generate_launch_description():
             'drone_id',
             default_value='1',
             description='Drone ID'
+        ),
+        DeclareLaunchArgument(
+            'move',
+            default_value='left',
+            description='Balloon movement pattern: left | right | up | down | random | none'
+        ),
+        # PNG Guidance tuning parameters
+        DeclareLaunchArgument(
+            'png_v_max',  default_value='5.0',
+            description='PNG max speed [m/s]'
+        ),
+        DeclareLaunchArgument(
+            'png_v_init', default_value='1.5',
+            description='PNG initial speed on intercept entry [m/s]'
+        ),
+        DeclareLaunchArgument(
+            'png_ka',     default_value='1.0',
+            description='PNG speed acceleration increment [m/s per second]'
+        ),
+        DeclareLaunchArgument(
+            'png_Ky',     default_value='2.0',
+            description='PNG elevation gain'
+        ),
+        DeclareLaunchArgument(
+            'png_Kz',     default_value='2.0',
+            description='PNG azimuth gain'
         ),
         OpaqueFunction(function=launch_setup),
     ])
