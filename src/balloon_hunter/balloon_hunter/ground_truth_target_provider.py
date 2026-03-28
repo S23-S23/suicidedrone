@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Ground Truth Target Provider Node
-YOLO + position_estimator 파이프라인을 대체하는 노드.
-Gazebo model_states에서 풍선의 실제 위치(Ground Truth)를 읽어
-/balloon_target_position 토픽으로 퍼블리시한다.
+Replaces the YOLO + position_estimator pipeline.
+Reads the balloon's ground-truth position from Gazebo model_states
+and publishes it to the /balloon_target_position topic.
 
-좌표 변환:
+Coordinate transform:
   Gazebo world frame: X=East, Y=North, Z=Up
   PX4 NED frame:      X=North, Y=East,  Z=Down
   → NED_x = Gazebo_y
@@ -21,7 +21,7 @@ import numpy as np
 
 
 def gazebo_to_ned(gx: float, gy: float, gz: float):
-    """Gazebo ENU → PX4 local NED 변환"""
+    """Convert Gazebo ENU to PX4 local NED."""
     return gy, gx, -gz
 
 
@@ -39,10 +39,10 @@ class GroundTruthTargetProvider(Node):
 
         self.balloon_ned: np.ndarray | None = None
 
-        # Publisher (position_estimator와 동일한 토픽/타입)
+        # Publisher (same topic/type as position_estimator)
         self.target_pub = self.create_publisher(PoseStamped, target_topic, 10)
 
-        # Gazebo model_states 구독
+        # Subscribe to Gazebo model_states
         self.create_subscription(
             ModelStates,
             '/gazebo/model_states',
@@ -50,7 +50,7 @@ class GroundTruthTargetProvider(Node):
             10,
         )
 
-        # 일정 주기로 퍼블리시
+        # Publish at a fixed rate
         self.create_timer(1.0 / publish_rate, self.publish_target)
 
         self.get_logger().info(

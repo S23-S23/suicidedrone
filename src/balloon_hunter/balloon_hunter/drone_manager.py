@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+Drone Manager Node
+FSM: IDLE → TAKEOFF → FORWARD → INTERCEPT → DONE
+
+INTERCEPT replaces the previous TRACKING+CHARGING states.
+  - Uses velocity control (OffboardControlMode.velocity=True)
+  - Velocity setpoint from PNG guidance (/png/velocity_cmd)
+  - Yaw rate setpoint from IBVS FOV controller (/ibvs/fov_yaw_rate)
+  - Exits to FORWARD on target lost, DONE on collision
+"""
+
+import math
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -7,239 +19,367 @@ from px4_msgs.msg import (
     TrajectorySetpoint,
     VehicleCommand,
     VehicleStatus,
-    Monitoring
+    Monitoring,
 )
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Twist
+from std_msgs.msg import String, Bool, Float64
 from enum import Enum
 import numpy as np
-import math
+
 
 class MissionState(Enum):
-    IDLE = 0
-    TAKEOFF = 1
-    FORWARD = 2
-    TRACKING = 3
-    CHARGING = 4
-    DONE = 5
+    IDLE      = 0
+    TAKEOFF   = 1
+    FORWARD   = 2
+    INTERCEPT = 3   # merged TRACKING + CHARGING (velocity control + PNG guidance)
+    DONE      = 4
+
 
 class BalloonHunterDroneManager(Node):
     def __init__(self):
-        super().__init__("drone_manager")
+        super().__init__('drone_manager')
 
-        # Parameters
-        self.declare_parameter('system_id', 1)
-        self.declare_parameter('takeoff_height', 6.0)
-        self.declare_parameter('forward_speed', 15.0)
-        self.declare_parameter('tracking_speed', 20.0)
-        self.declare_parameter('charge_speed', 20.0)
-        self.declare_parameter('charge_distance', 3.0)
-        self.declare_parameter('collision_distance', 0.5)
+        # ── Parameters ─────────────────────────────────────────────────────
+        self.declare_parameter('system_id',          1)
+        self.declare_parameter('takeoff_height',     6.0)
+        self.declare_parameter('forward_speed',      2.0)
+        self.declare_parameter('forward_distance_limit', 50.0)
 
-        self.system_id = self.get_parameter('system_id').value
-        self.takeoff_height = self.get_parameter('takeoff_height').value
-        self.forward_speed = self.get_parameter('forward_speed').value
-        self.tracking_speed = self.get_parameter('tracking_speed').value
-        self.charge_speed = self.get_parameter('charge_speed').value
-        self.charge_distance = self.get_parameter('charge_distance').value
-        self.collision_distance = self.get_parameter('collision_distance').value
+        self.system_id              = self.get_parameter('system_id').value
+        self.takeoff_height         = self.get_parameter('takeoff_height').value
+        self.forward_speed          = self.get_parameter('forward_speed').value
+        self.forward_distance_limit = self.get_parameter('forward_distance_limit').value
 
-        self.get_logger().info(f"Drone Manager {self.system_id} Initializing with Monitoring...")
+        self.get_logger().info(
+            f'Drone Manager {self.system_id} initializing (IBVS+PNG mode)...'
+        )
 
-        self.topic_prefix_fmu = f"drone{self.system_id}/fmu/"
+        self.topic_prefix_fmu = f'drone{self.system_id}/fmu/'
 
-        # State variables
-        self.state = MissionState.IDLE
-        self.drone_pos = np.array([0.0, 0.0, 0.0])
-        self.drone_yaw = 0.0
-        self.target_pos = None
-        self.nav_state = 0
-        self.arming_state = 0
-        self.monitoring_msg = Monitoring() # Monitoring 변수 초기화
-        self.last_cmd_time = 0
-        self.forward_start_pos = None  # Track starting position for forward flight
-        self.forward_distance_limit = 10.0  # Maximum forward distance in meters
+        # ── State variables ─────────────────────────────────────────────────
+        self.state            = MissionState.IDLE
+        self.drone_pos        = np.array([0.0, 0.0, 0.0])   # NED [m]
+        self.drone_yaw        = 0.0                           # [rad]
+        self.nav_state        = 0
+        self.arming_state     = 0
+        self.last_cmd_time    = 0.0
+        self.forward_start_pos = None
 
-        # Publishers
-        self.ocm_publisher = self.create_publisher(OffboardControlMode, f'{self.topic_prefix_fmu}in/offboard_control_mode', qos_profile_sensor_data)
-        self.traj_setpoint_publisher = self.create_publisher(TrajectorySetpoint, f'{self.topic_prefix_fmu}in/trajectory_setpoint', qos_profile_sensor_data)
-        self.vehicle_command_publisher = self.create_publisher(VehicleCommand, f'{self.topic_prefix_fmu}in/vehicle_command', qos_profile_sensor_data)
+        # INTERCEPT inputs (from IBVS + PNG)
+        self.target_detected  = False
+        self.vel_cmd          = None    # NED velocity [m/s] from PNG
+        self.fov_yaw_rate     = 0.0    # [rad/s] from IBVS
+        self.collision_done   = False
 
-        # Subscribers
-        # Use Monitoring for position data (VehicleLocalPosition not reliable in this setup)
-        self.status_sub = self.create_subscription(VehicleStatus, f'{self.topic_prefix_fmu}out/vehicle_status', self.status_callback, qos_profile_sensor_data)
-        self.monitoring_sub = self.create_subscription(Monitoring, f'{self.topic_prefix_fmu}out/monitoring', self.monitoring_callback, qos_profile_sensor_data)
-        self.target_sub = self.create_subscription(PoseStamped, '/balloon_target_position', self.target_callback, 10)
+        # ── Publishers ──────────────────────────────────────────────────────
+        self.ocm_publisher = self.create_publisher(
+            OffboardControlMode,
+            f'{self.topic_prefix_fmu}in/offboard_control_mode',
+            qos_profile_sensor_data,
+        )
+        self.traj_setpoint_publisher = self.create_publisher(
+            TrajectorySetpoint,
+            f'{self.topic_prefix_fmu}in/trajectory_setpoint',
+            qos_profile_sensor_data,
+        )
+        self.vehicle_command_publisher = self.create_publisher(
+            VehicleCommand,
+            f'{self.topic_prefix_fmu}in/vehicle_command',
+            qos_profile_sensor_data,
+        )
+        self.mission_state_pub = self.create_publisher(String, '/mission_state', 10)
 
-        # Timers
-        self.create_timer(0.1, self.timer_ocm_callback)
-        self.create_timer(0.04, self.timer_mission_callback) # 25Hz
+        # ── Subscribers ─────────────────────────────────────────────────────
+        self.create_subscription(
+            VehicleStatus,
+            f'{self.topic_prefix_fmu}out/vehicle_status',
+            self.status_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            Monitoring,
+            f'{self.topic_prefix_fmu}out/monitoring',
+            self.monitoring_callback,
+            qos_profile_sensor_data,
+        )
 
-        # Wait for PX4 to be ready before starting mission (single shot timer)
+        # IBVS: target detection flag
+        self.create_subscription(
+            Bool,
+            '/ibvs/target_detected',
+            self.target_detected_callback,
+            10,
+        )
+        # IBVS: FOV yaw rate command (Eq.13)
+        self.create_subscription(
+            Float64,
+            '/ibvs/fov_yaw_rate',
+            self.fov_yaw_rate_callback,
+            10,
+        )
+        # PNG: velocity command (Eq.10)
+        self.create_subscription(
+            Twist,
+            '/png/velocity_cmd',
+            self.vel_cmd_callback,
+            10,
+        )
+        # Collision event from collision_handler
+        self.create_subscription(
+            Bool,
+            '/balloon_collision',
+            self.collision_callback,
+            10,
+        )
+
+        # ── Timers ──────────────────────────────────────────────────────────
+        self.create_timer(0.1,  self.timer_ocm_callback)      # 10 Hz
+        self.create_timer(0.04, self.timer_mission_callback)  # 25 Hz
+
+        # Single-shot: wait 5 s for PX4 before starting mission
         self.start_mission_timer = self.create_timer(5.0, self.start_mission)
 
-    def status_callback(self, msg):
-        self.nav_state = msg.nav_state
+    # ── PX4 status callbacks ──────────────────────────────────────────────────
+
+    def status_callback(self, msg: VehicleStatus):
+        self.nav_state    = msg.nav_state
         self.arming_state = msg.arming_state
 
-    def monitoring_callback(self, msg):
-        """Monitoring 메시지로부터 드론 위치 및 상태 업데이트"""
-        self.monitoring_msg = msg
-        # Update drone position from monitoring
+    def monitoring_callback(self, msg: Monitoring):
         self.drone_pos = np.array([msg.pos_x, msg.pos_y, msg.pos_z])
-        self.drone_yaw = msg.head  # Already in radians despite msg definition saying degrees
-        self.get_logger().info(f'[DEBUG] Monitoring callback: pos=({msg.pos_x:.2f}, {msg.pos_y:.2f}, {msg.pos_z:.2f})', throttle_duration_sec=5.0)
+        self.drone_yaw = msg.head
+        self.get_logger().info(
+            f'[DEBUG] pos=({msg.pos_x:.2f},{msg.pos_y:.2f},{msg.pos_z:.2f})',
+            throttle_duration_sec=5.0,
+        )
 
-    def target_callback(self, msg):
-        self.target_pos = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
-        self.get_logger().info(f'[DEBUG] Drone manager: Target callback triggered, pos=({self.target_pos[0]:.2f}, {self.target_pos[1]:.2f}, {self.target_pos[2]:.2f}), current_state={self.state}', throttle_duration_sec=1.0)
+    # ── IBVS / PNG / collision callbacks ─────────────────────────────────────
 
-        if self.state == MissionState.FORWARD:
-            self.get_logger().info('Balloon detected! TRACKING start.')
-            self.state = MissionState.TRACKING
+    def target_detected_callback(self, msg: Bool):
+        self.target_detected = msg.data
+
+        # Level-triggered: FORWARD → INTERCEPT whenever target is visible
+        # Edge-triggered (not was_detected) is intentionally avoided:
+        # the rising edge can occur during TAKEOFF before FORWARD is entered,
+        # causing the transition to be permanently missed.
+        if msg.data and self.state == MissionState.FORWARD:
+            self.get_logger().info('Target detected! Switching to INTERCEPT.')
+            self.state = MissionState.INTERCEPT
+
+        if not msg.data and self.state == MissionState.INTERCEPT:
+            self.get_logger().warn('Target lost! Returning to FORWARD.')
+            self.state = MissionState.FORWARD
+
+    def fov_yaw_rate_callback(self, msg: Float64):
+        """FOV yaw rate command from IBVS (Eq.13)."""
+        self.fov_yaw_rate = msg.data
+
+    def vel_cmd_callback(self, msg: Twist):
+        """NED velocity command from PNG guidance (Eq.10)."""
+        self.vel_cmd = np.array([msg.linear.x, msg.linear.y, msg.linear.z])
+
+    def collision_callback(self, msg: Bool):
+        if msg.data and self.state == MissionState.INTERCEPT:
+            self.get_logger().info('Balloon collision! Mission DONE.')
+            self.collision_done = True
+            self.state = MissionState.DONE
+
+    # ── Mission start ─────────────────────────────────────────────────────────
 
     def start_mission(self):
-        # Cancel the timer after first run (single-shot behavior)
         self.start_mission_timer.cancel()
-
         if self.state == MissionState.IDLE:
-            self.get_logger().info('Switching to TAKEOFF state...')
+            self.get_logger().info('Starting mission: IDLE → TAKEOFF')
             self.state = MissionState.TAKEOFF
 
+    # ── OCM timer: must match current control mode ────────────────────────────
+
     def timer_ocm_callback(self):
-        msg = OffboardControlMode()
-        msg.position, msg.velocity, msg.timestamp = True, False, int(self.get_clock().now().nanoseconds / 1000)
+        msg           = OffboardControlMode()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        if self.state == MissionState.INTERCEPT:
+            # Velocity control during INTERCEPT (PNG provides NED velocity)
+            msg.position = False
+            msg.velocity = True
+        else:
+            msg.position = True
+            msg.velocity = False
         self.ocm_publisher.publish(msg)
 
+    # ── Mission FSM timer ─────────────────────────────────────────────────────
+
     def timer_mission_callback(self):
-        # Log current state periodically
-        self.get_logger().info(f'[DEBUG] Current state: {self.state}, pos=({self.drone_pos[0]:.2f},{self.drone_pos[1]:.2f},{self.drone_pos[2]:.2f}), armed={self.arming_state}, nav={self.nav_state}', throttle_duration_sec=3.0)
+        # Publish state name for drone_visualizer
+        state_msg      = String()
+        state_msg.data = self.state.name
+        self.mission_state_pub.publish(state_msg)
+
+        self.get_logger().info(
+            f'[DEBUG] state={self.state.name}, '
+            f'pos=({self.drone_pos[0]:.2f},{self.drone_pos[1]:.2f},{self.drone_pos[2]:.2f}), '
+            f'armed={self.arming_state}, nav={self.nav_state}',
+            throttle_duration_sec=3.0,
+        )
 
         if self.state == MissionState.IDLE:
-            # Send safe initial position (current or slightly above ground)
-            # Prevent sending [0,0,0] which commands drone to go underground
-            safe_z = max(self.drone_pos[2], -0.1)  # Never command below -0.1m
-            self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], safe_z])
-            return
+            safe_z = max(self.drone_pos[2], -0.1)
+            self._publish_position_setpoint(
+                [self.drone_pos[0], self.drone_pos[1], safe_z]
+            )
+        elif self.state == MissionState.TAKEOFF:
+            self.handle_takeoff()
+        elif self.state == MissionState.FORWARD:
+            self.handle_forward()
+        elif self.state == MissionState.INTERCEPT:
+            self.handle_intercept()
+        elif self.state == MissionState.DONE:
+            self.handle_done()
 
-        if self.state == MissionState.TAKEOFF: self.handle_takeoff()
-        elif self.state == MissionState.FORWARD: self.handle_forward()
-        elif self.state == MissionState.TRACKING: self.handle_tracking()
-        elif self.state == MissionState.CHARGING: self.handle_charging()
-        elif self.state == MissionState.DONE: self.handle_done()
+    # ── State handlers ────────────────────────────────────────────────────────
 
     def handle_takeoff(self):
-        # Key: Must send trajectory setpoints continuously BEFORE arming/mode change
-        # This satisfies PX4's offboard streaming requirement
-        target_alt = -self.takeoff_height
+        target_alt = -self.takeoff_height  # NED Down → negative = up
 
-        # Always publish setpoint first (critical for offboard mode)
-        if self.arming_state != VehicleStatus.ARMING_STATE_ARMED or self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            # Before armed/offboard: publish safe ground-level position
-            safe_z = max(self.drone_pos[2], -0.1)  # Never command below -0.1m
-            self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], safe_z])
+        # Always publish a setpoint first (PX4 offboard streaming requirement)
+        if (self.arming_state != VehicleStatus.ARMING_STATE_ARMED
+                or self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD):
+            safe_z = max(self.drone_pos[2], -0.1)
+            self._publish_position_setpoint(
+                [self.drone_pos[0], self.drone_pos[1], safe_z]
+            )
         else:
-            # After armed/offboard: publish target altitude
-            self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], target_alt])
+            self._publish_position_setpoint(
+                [self.drone_pos[0], self.drone_pos[1], target_alt]
+            )
 
         now = self.get_clock().now().nanoseconds / 1e9
 
-        # 1. Check and request ARM (retry every 1 second if failed)
         if self.arming_state != VehicleStatus.ARMING_STATE_ARMED:
             if now - self.last_cmd_time > 1.0:
-                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+                self.publish_vehicle_command(
+                    VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0
+                )
                 self.get_logger().info('Attempting to ARM...')
                 self.last_cmd_time = now
             return
 
-        # 2. Check and request OFFBOARD mode (retry every 1 second if failed)
         if self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             if now - self.last_cmd_time > 1.0:
-                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+                self.publish_vehicle_command(
+                    VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0
+                )
                 self.get_logger().info('Requesting OFFBOARD mode...')
                 self.last_cmd_time = now
             return
 
-        # 3. Check if target altitude reached
         if abs(self.drone_pos[2] - target_alt) < 0.3:
-            self.get_logger().info('Takeoff Success! Starting forward flight.')
-            self.forward_start_pos = self.drone_pos.copy()  # Save starting position
+            self.get_logger().info('Takeoff complete! Switching to FORWARD.')
+            self.forward_start_pos = self.drone_pos.copy()
             self.state = MissionState.FORWARD
-            return
 
     def handle_forward(self):
-        # Initialize start position if not set
         if self.forward_start_pos is None:
             self.forward_start_pos = self.drone_pos.copy()
-            self.get_logger().info(f'[DEBUG] Forward flight started from position: ({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f})')
 
-        # Check if forward distance limit reached
-        distance_traveled = np.linalg.norm(self.drone_pos[:2] - self.forward_start_pos[:2])
+        distance_traveled = np.linalg.norm(
+            self.drone_pos[:2] - self.forward_start_pos[:2]
+        )
 
-        self.get_logger().info(f'[DEBUG] FORWARD state: pos=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}, {self.drone_pos[2]:.2f}), traveled={distance_traveled:.2f}m', throttle_duration_sec=2.0)
+        self.get_logger().info(
+            f'[DEBUG] FORWARD: traveled={distance_traveled:.2f}m',
+            throttle_duration_sec=2.0,
+        )
 
         if distance_traveled >= self.forward_distance_limit:
-            self.get_logger().info(f'Forward distance limit reached ({distance_traveled:.2f}m). Hovering in place.', throttle_duration_sec=2.0)
-            # Hover in current position
-            self.publish_trajectory_setpoint([self.drone_pos[0], self.drone_pos[1], -self.takeoff_height])
+            self.get_logger().info(
+                f'Forward limit reached ({distance_traveled:.2f}m). Hovering.',
+                throttle_duration_sec=2.0,
+            )
+            self._publish_position_setpoint(
+                [self.drone_pos[0], self.drone_pos[1], -self.takeoff_height]
+            )
             return
 
-        # Continue forward flight - fixed target position: x=0, y=+10, z=maintain altitude
-        self.publish_trajectory_setpoint([5.0, 0.0, -self.takeoff_height])
+        # Fly forward (North in NED = PX4 x-axis)
+        self._publish_position_setpoint([1.0, 0.0, -self.takeoff_height])
 
-    def handle_tracking(self):
-        self.get_logger().info(f'[DEBUG] TRACKING state: drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}), target={self.target_pos if self.target_pos is not None else "None"}', throttle_duration_sec=1.0)
+    def handle_intercept(self):
+        """
+        Velocity-control intercept using PNG guidance output.
+        Velocity setpoint: NED from /png/velocity_cmd           (Eq.10)
+        Yaw rate setpoint: from /ibvs/fov_yaw_rate              (Eq.13)
+        """
+        if self.vel_cmd is None:
+            # No velocity command yet – hover until PNG publishes
+            self._publish_velocity_setpoint([0.0, 0.0, 0.0], yawspeed=0.0)
+            return
 
-        if self.target_pos is None:
-            self.get_logger().warn('[DEBUG] Target lost, returning to FORWARD')
-            self.state = MissionState.FORWARD
-            return
-        diff = self.target_pos - self.drone_pos
-        if np.linalg.norm(diff[:2]) < self.charge_distance:
-            self.state = MissionState.CHARGING
-            return
-        direction = diff / (np.linalg.norm(diff) + 1e-6)
-        next_pos = self.drone_pos + direction * self.tracking_speed * 0.5
-        self.publish_trajectory_setpoint([next_pos[0], next_pos[1], -self.takeoff_height], yaw=math.atan2(diff[1], diff[0]))
+        self._publish_velocity_setpoint(
+            self.vel_cmd, yawspeed=self.fov_yaw_rate
+        )
 
-    def handle_charging(self):
-        self.get_logger().info(f'[DEBUG] CHARGING state: drone=({self.drone_pos[0]:.2f}, {self.drone_pos[1]:.2f}), target={self.target_pos if self.target_pos is not None else "None"}', throttle_duration_sec=1.0)
-
-        if self.target_pos is None:
-            self.state = MissionState.DONE
-            return
-        diff = self.target_pos - self.drone_pos
-        if np.linalg.norm(diff) < self.collision_distance:
-            self.get_logger().info('HIT!')
-            self.state = MissionState.DONE
-            return
-        direction = diff / (np.linalg.norm(diff) + 1e-6)
-        next_pos = self.drone_pos + direction * self.charge_speed * 0.8
-        self.publish_trajectory_setpoint(next_pos, yaw=math.atan2(diff[1], diff[0]))
+        self.get_logger().info(
+            f'[DEBUG] INTERCEPT: v=({self.vel_cmd[0]:.2f},{self.vel_cmd[1]:.2f},'
+            f'{self.vel_cmd[2]:.2f}), yaw_rate={self.fov_yaw_rate:.3f}',
+            throttle_duration_sec=1.0,
+        )
 
     def handle_done(self):
-        self.publish_trajectory_setpoint(self.drone_pos, yaw=self.drone_yaw)
+        # Hover in place
+        self._publish_position_setpoint(
+            [self.drone_pos[0], self.drone_pos[1], self.drone_pos[2]],
+            yaw=self.drone_yaw,
+        )
 
-    def publish_trajectory_setpoint(self, pos, yaw=0.0):
-        msg = TrajectorySetpoint()
+    # ── Setpoint helpers ──────────────────────────────────────────────────────
+
+    def _publish_position_setpoint(self, pos, yaw=0.0):
+        """Send position setpoint in NED frame."""
+        msg          = TrajectorySetpoint()
         msg.position = [float(pos[0]), float(pos[1]), float(pos[2])]
-        msg.yaw, msg.timestamp = float(yaw), int(self.get_clock().now().nanoseconds / 1000)
+        msg.yaw      = float(yaw)
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.traj_setpoint_publisher.publish(msg)
+
+    def _publish_velocity_setpoint(self, vel, yawspeed=0.0):
+        """
+        Send velocity setpoint in NED frame.
+        position must be NaN when using velocity control.
+        """
+        nan = float('nan')
+        msg          = TrajectorySetpoint()
+        msg.position = [nan, nan, nan]
+        msg.velocity = [float(vel[0]), float(vel[1]), float(vel[2])]
+        msg.yaw      = nan
+        msg.yawspeed = float(yawspeed)
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.traj_setpoint_publisher.publish(msg)
 
     def publish_vehicle_command(self, command, p1=0.0, p2=0.0):
-        msg = VehicleCommand()
-        msg.param1, msg.param2, msg.command = p1, p2, command
-        msg.target_system, msg.target_component, msg.source_system, msg.source_component, msg.from_external = self.system_id, 1, 1, 1, True
-        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg                 = VehicleCommand()
+        msg.param1          = p1
+        msg.param2          = p2
+        msg.command         = command
+        msg.target_system   = self.system_id
+        msg.target_component = 1
+        msg.source_system   = 1
+        msg.source_component = 1
+        msg.from_external   = True
+        msg.timestamp       = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher.publish(msg)
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = BalloonHunterDroneManager()
-    try: rclpy.spin(node)
-    except KeyboardInterrupt: pass
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

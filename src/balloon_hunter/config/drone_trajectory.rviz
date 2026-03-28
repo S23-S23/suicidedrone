@@ -5,7 +5,8 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Path1
+        - /GT Trajectory1
+        - /PX4 Trajectory1
         - /Pose1
         - /TF1
         - /Image1
@@ -39,33 +40,31 @@ Visualization Manager:
       Plane Cell Count: 20
       Reference Frame: <Fixed Frame>
       Value: true
-    - Alpha: 1
-      Buffer Length: 1
-      Class: rviz_default_plugins/Path
-      Color: 0; 255; 0
+    - Class: rviz_default_plugins/Marker
       Enabled: true
-      Head Diameter: 0.30000001192092896
-      Head Length: 0.20000000298023224
-      Length: 0.30000001192092896
-      Line Style: Lines
-      Line Width: 0.029999999329447746
-      Name: Path
-      Offset:
-        X: 0
-        Y: 0
-        Z: 0
-      Pose Color: 255; 85; 255
-      Pose Style: None
-      Radius: 0.029999999329447746
-      Shaft Diameter: 0.10000000149011612
-      Shaft Length: 0.10000000149011612
+      Name: GT Trajectory
+      Namespaces:
+        gt_trajectory: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /drone/trajectory
+        Value: /drone/gt_trajectory
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: PX4 Trajectory
+      Namespaces:
+        px4_trajectory: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /drone/px4_trajectory
       Value: true
     - Alpha: 1
       Axes Length: 0.30000001192092896
@@ -132,7 +131,20 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /inference_result_1
+        Value: /ibvs/debug_image
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Marker
+      Namespaces:
+        mission_state: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /drone/state_text
       Value: true
   Enabled: true
   Global Options:
@@ -155,7 +167,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.0101686716079712
+      Distance: 1.9885261058807373
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -170,10 +182,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.38954147696495056
+      Pitch: -0.050458818674087524
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 0.03195476159453392
+      Yaw: 5.95513916015625
     Saved: ~
 Window Geometry:
   Displays:

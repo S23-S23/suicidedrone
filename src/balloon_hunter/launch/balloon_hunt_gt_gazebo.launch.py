@@ -125,23 +125,44 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # Position Estimator (YOLO 버전과 동일하게 유지)
-    position_estimator = Node(
+    # [IBVS] Image-Based Visual Servoing Controller
+    # Computes LOS angles (Eq.5,7), image error (Eq.3), FOV yaw rate (Eq.13)
+    ibvs_controller = Node(
         package='balloon_hunter',
-        executable='position_estimator',
-        name='position_estimator',
+        executable='ibvs_controller',
+        name='ibvs_controller',
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'detection_topic': f'/Yolov8_Inference_{drone_id}',
-            'position_topic': f'/drone{drone_id}/fmu/out/vehicle_local_position',
-            'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
-            'target_position_topic': '/balloon_target_position',
-            'cam_pitch_deg': 0.0,
+            'fx': 205.5,
+            'fy': 205.5,
+            'cx': 320.0,
+            'cy': 180.0,
+            'fov_kp': 1.5,
+            'fov_kd': 0.1,
+            'target_timeout': 0.5,
         }]
     )
 
-    # Drone Manager
+    # [PNG] Proportional Navigation Guidance
+    # Computes NED velocity command (Eq.8,9,10,14)
+    png_guidance = Node(
+        package='balloon_hunter',
+        executable='png_guidance',
+        name='png_guidance',
+        output='screen',
+        parameters=[{
+            'system_id': drone_id,
+            'Ky': 1.0,
+            'Kz': 1.0,
+            'ka': 0.2,
+            'v_max': 2.0,
+            'v_init': 0.5,
+            'rate': 50.0,
+        }]
+    )
+
+    # Drone Manager (INTERCEPT state uses PNG velocity + IBVS yaw rate)
     drone_manager = Node(
         package='balloon_hunter',
         executable='drone_manager',
@@ -151,14 +172,11 @@ def launch_setup(context, *args, **kwargs):
             'system_id': drone_id,
             'takeoff_height': 6.0,
             'forward_speed': 2.0,
-            'tracking_speed': 3.0,
-            'charge_speed': 5.0,
-            'charge_distance': 3.0,
-            'collision_distance': 0.5,
+            'forward_distance_limit': 50.0,
         }]
     )
 
-    # Collision Handler
+    # Collision Handler (uses Gazebo model_states + Monitoring, no position_estimator)
     collision_handler = Node(
         package='balloon_hunter',
         executable='collision_handler',
@@ -167,6 +185,8 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'collision_distance': 0.5,
             'drone_id': drone_id,
+            'balloon_model_name': 'target_balloon',
+            'balloon_link_z_offset': 1.5,
         }]
     )
 
@@ -192,6 +212,20 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
+    # Mission Logger
+    mission_logger = Node(
+        package='balloon_hunter',
+        executable='mission_logger',
+        name='mission_logger',
+        output='screen',
+        parameters=[{
+            'system_id': drone_id,
+            'balloon_model_name': 'target_balloon',
+            'balloon_link_z_offset': 1.5,
+            'log_rate': 10.0,
+        }]
+    )
+
     return [
         px4_lat, px4_lon,
         resource_path_env, px4_sim_env, model_path_env, plugin_path_env,
@@ -200,12 +234,14 @@ def launch_setup(context, *args, **kwargs):
         jinja_process,
         spawn_entity_node,
         px4_process,
-        gt_balloon_detector,
-        position_estimator,
-        drone_manager,
-        collision_handler,
+        gt_balloon_detector,   # → /Yolov8_Inference_{id}
+        ibvs_controller,       # → /ibvs/target_detected, /ibvs/los_angles, /ibvs/fov_yaw_rate
+        png_guidance,          # → /png/velocity_cmd
+        drone_manager,         # consumes ibvs + png outputs
+        collision_handler,     # → /balloon_collision
         drone_visualizer,
         rviz_node,
+        mission_logger,
     ]
 
 
