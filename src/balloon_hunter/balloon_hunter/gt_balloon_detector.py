@@ -51,6 +51,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from sensor_msgs.msg import Image
 from gazebo_msgs.msg import ModelStates, LinkStates
+from geometry_msgs.msg import Point
 from yolov8_msgs.msg import InferenceResult, Yolov8Inference
 from cv_bridge import CvBridge
 
@@ -154,6 +155,7 @@ class GtBalloonDetector(Node):
         # --- Publishers (identical topics/types to balloon_detector) --------
         self.yolov8_pub = self.create_publisher(Yolov8Inference, f'/Yolov8_Inference_{sid}', 10)
         self.img_pub    = self.create_publisher(Image,           f'/inference_result_{sid}',  10)
+        self.pos_pub    = self.create_publisher(Point,           '/target_world_pos',         10)
 
         # --- 20Hz timer: publish detection independent of slow camera topic ---
         self.create_timer(0.05, self._timer_detect)  # 20Hz
@@ -180,6 +182,10 @@ class GtBalloonDetector(Node):
         p   = msg.pose[idx].position
         # Apply balloon_link Z offset from model.sdf (<pose>0 0 1.5 0 0 0</pose>)
         self.balloon_enu = np.array([float(p.x), float(p.y), float(p.z) + self.balloon_z_offset])
+        # Publish target 3D world position (Gazebo ENU) for logger/drone_manager
+        pt = Point()
+        pt.x, pt.y, pt.z = self.balloon_enu[0], self.balloon_enu[1], self.balloon_enu[2]
+        self.pos_pub.publish(pt)
 
     def link_states_callback(self, msg: LinkStates):
         """

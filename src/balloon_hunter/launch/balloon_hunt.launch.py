@@ -66,7 +66,7 @@ def generate_launch_description():
             'tracking_speed': 3.0,
             'charge_speed': 5.0,
             'charge_distance': 3.0,
-            'collision_distance': 0.5
+            'collision_distance': 1.0
         }]
     )
 
@@ -77,7 +77,7 @@ def generate_launch_description():
         name='collision_handler',
         output='screen',
         parameters=[{
-            'collision_distance': 0.5,
+            'collision_distance': 1.0,
             'drone_id': LaunchConfiguration('drone_id')
         }]
     )

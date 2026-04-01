@@ -173,18 +173,18 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # Logger with filter_type for CSV filename
+    # Logger with filter_type for CSV filename (supports DKF / EKF / GT)
     logger = Node(
         package='balloon_hunter',
         executable='logger',
         name='logger',
         output='screen',
         parameters=[{
-            'filter_type': filter_type,           # ← DKF or EKF
+            'filter_type': filter_type,           # ← DKF, EKF, or GT
             'system_id': drone_id,
-            'target_gazebo_x':  0.0,   # fallback static GT (overridden by /target_world_pos)
-            'target_gazebo_y':  5.0,
-            'target_gazebo_z':  2.0,
+            'target_gazebo_x':  3.0,   # fallback static GT (overridden by /target_world_pos); balloon sphere center
+            'target_gazebo_y':  10.0,
+            'target_gazebo_z':  6.5,   # model root z(5.0) + balloon_link_z_offset(1.5)
             'fx': 454.8,
             'fy': 454.8,
             'cx': 424.0,
@@ -192,6 +192,7 @@ def launch_setup(context, *args, **kwargs):
             'cam_pitch_deg': 0.0,
             'detection_topic': f'/Yolov8_Inference_{drone_id}',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
+            'collision_distance': 2.0,
         }]
     )
 
@@ -200,7 +201,7 @@ def launch_setup(context, *args, **kwargs):
         executable='collision_handler',
         name='collision_handler',
         output='screen',
-        parameters=[{'collision_distance': 0.5, 'drone_id': drone_id}]
+        parameters=[{'collision_distance': 2.0, 'drone_id': drone_id}]
     )
 
     target_mover = Node(
@@ -210,11 +211,12 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'target_name': 'target_balloon',
-            'nominal_x':    0.0,    # Gazebo X (NED North)
-            'nominal_y':    5.0,    # Gazebo Y (depth, fixed)
-            'nominal_z':    5.0,    # Gazebo Z (height, fixed)
-            'amplitude':    3.0,    # ±4m constant-velocity swing in Gazebo X
-            'speed':        0.5,    # m/s constant speed
+            'nominal_x':    3.0,    # Gazebo X (model root)
+            'nominal_y':    10.0,    # Gazebo Y (model root, fixed)
+            'nominal_z':    5.0,    # Gazebo Z (model root, matches world file pose z)
+            'amplitude':    3.5,    # ±m swing; 0=static
+            'speed':        10.0,    # m/s; 0=static
+            'balloon_link_z_offset': 1.5,  # from model.sdf <pose>0 0 1.5</pose>
         }]
     )
 
@@ -254,10 +256,10 @@ def launch_setup(context, *args, **kwargs):
     mission_nodes_event = RegisterEventHandler(
         OnProcessExit(target_action=spawn_drone1, on_exit=[
             TimerAction(period=10.0, actions=[
-                #target_mover,
+                target_mover,
                 detector_node,
                 drone_manager,
-                #logger,
+                logger,
                 drone_visualizer,
             ])
         ])

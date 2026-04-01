@@ -156,13 +156,18 @@ class DelayedKalmanFilter:
         # Stability guards
         self.x[0] = np.clip(self.x[0], -3.0, 3.0)
         self.x[1] = np.clip(self.x[1], -3.0, 3.0)
-        self.x[2] = np.clip(self.x[2], -2.0, 2.0)
-        self.x[3] = np.clip(self.x[3], -2.0, 2.0)
+        self.x[2] = np.clip(self.x[2], -0.5, 0.5)
+        self.x[3] = np.clip(self.x[3], -0.5, 0.5)
         if np.any(np.diag(self.P) > 10.0):
             self.P = np.eye(4) * 0.1
 
-    def update(self, z_pixel):
-        """Algorithm 2, lines 5-9: correct with DELAYED measurement."""
+    def update(self, z_pixel, delay_steps=None):
+        """Algorithm 2, lines 5-9: correct with DELAYED measurement.
+
+        delay_steps: actual measured delay in predict-steps. If None, falls
+                     back to the fixed self.D. Caller computes this from
+                     ROS timestamps: round((t_now - t_image) / dt).
+        """
         zb = np.array([z_pixel[0] / self.foc, z_pixel[1] / self.foc])
 
         if not self.initialized:
@@ -172,13 +177,22 @@ class DelayedKalmanFilter:
             self.initialized = True
             return
 
-        D = self.D
+        D = int(delay_steps) if delay_steps is not None else self.D
+        D = max(1, min(D, self.D + 5))  # sanity clamp: max ~15 steps (300ms)
+
         hl = len(self.history)
         if hl < D:
             self._std_correct(zb)
             return
 
-        # Step 1: Retrieve state at time t-D
+        # If drone is rotating fast, re-propagation becomes unreliable → fall back
+        recent = list(self.history)[-D:]
+        max_omega = max(np.linalg.norm(h['w']) for h in recent)
+        if max_omega > 0.3:  # rad/s threshold
+            self._std_correct(zb)
+            return
+
+        # Step 1: Retrieve state at the estimated capture time
         idx = hl - D
         xd, Pd = self.history[idx]['x'].copy(), self.history[idx]['P'].copy()
 
@@ -197,6 +211,10 @@ class DelayedKalmanFilter:
             F = self._build_F(xc[0], xc[1], wc, vzc, pz)
             xc[0] += dp[0] + xc[2] * self.dt
             xc[1] += dp[1] + xc[3] * self.dt
+            xc[0] = np.clip(xc[0], -3.0, 3.0)
+            xc[1] = np.clip(xc[1], -3.0, 3.0)
+            xc[2] = np.clip(xc[2], -0.5, 0.5)
+            xc[3] = np.clip(xc[3], -0.5, 0.5)
             Pc = F @ Pc @ F.T + self.Q
 
         # Step 4: Replace current state with re-propagated result
@@ -285,7 +303,7 @@ class SimpleEKF:
         if np.any(np.diag(self.P) > 10.0):
             self.P = np.eye(4) * 0.1
 
-    def update(self, z_pixel):
+    def update(self, z_pixel, delay_steps=None):
         """No delay compensation — treats delayed measurement as current."""
         zb = np.array([z_pixel[0] / self.foc, z_pixel[1] / self.foc])
         if not self.initialized:
@@ -347,7 +365,7 @@ class InterceptionController(Node):
 
         # Speed limits
         self.declare_parameter('max_speed', 10.0)
-        self.declare_parameter('collision_distance', 1.0)
+        self.declare_parameter('collision_distance', 2.0)
 
         # Filter parameters
         self.declare_parameter('dkf_dt', 0.02)
@@ -526,6 +544,8 @@ class InterceptionController(Node):
     def det_cb(self, msg: Yolov8Inference):
         if not msg.yolov8_inference:
             return
+        if self.state not in (State.SEARCH, State.INTERCEPT):
+            return
         det = msg.yolov8_inference[0]
         u = (det.left + det.right) * 0.5
         v = (det.top + det.bottom) * 0.5
@@ -539,7 +559,15 @@ class InterceptionController(Node):
             self._gt_prev_uv = uv.copy()
             self._gt_pixel = np.array([u, v, duv[0], duv[1]])
         else:
-            self.filt.update(np.array([u, v]))
+            # Compute actual delay from image header stamp vs. now
+            delay_steps = None
+            if msg.header.stamp.sec > 0:
+                img_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+                now_sec = self.get_clock().now().nanoseconds * 1e-9
+                elapsed = now_sec - img_sec
+                if elapsed > 0:
+                    delay_steps = round(elapsed / self.filt.dt)
+            self.filt.update(np.array([u, v]), delay_steps=delay_steps)
 
         self.target_detected = True
         self.target_lost_count = 0
@@ -577,7 +605,7 @@ class InterceptionController(Node):
         if self.filter_type == 'GT':
             est = self._gt_pixel
         else:
-            if self.filt.initialized:
+            if self.filt.initialized and self.state in (State.SEARCH, State.INTERCEPT):
                 self.filt.predict(
                     omega_body=self.drone_omega,
                     vel_ned=self.drone_vel,
@@ -669,19 +697,25 @@ class InterceptionController(Node):
 
         # ── Collision detection ──
         if self.target_world_pos is not None:
-            target_ned = np.array([
-                self.target_world_pos[0],
-                self.target_world_pos[1],
-                -self.target_world_pos[2]
+            # 1. 타겟의 위치를 Gazebo ENU에서 PX4 NED로 변환
+            # Gazebo (ENU): X = East, Y = North, Z = Up
+            # PX4 (NED): X = North, Y = East, Z = Down
+            # Gazebo ENU: X=East, Y=North, Z=Up → PX4 NED: X=North, Y=East, Z=Down
+            target_pos_ned = np.array([
+                self.target_world_pos[1],  # North = Gazebo Y
+                self.target_world_pos[0],  # East  = Gazebo X
+                -self.target_world_pos[2]  # Down  = -Gazebo Z
             ])
-            dist = np.linalg.norm(self.drone_pos - target_ned)
+
+            # 2. 드론의 현재 위치(이미 NED)와 변환된 타겟 위치(NED) 사이의 거리 계산
+            dist = np.linalg.norm(self.drone_pos - target_pos_ned)
+
+            # 3. 충돌 조건 확인
             if dist < self.collision_dist:
-                self.get_logger().info(
-                    f'[{self.filter_type}] COLLISION at dist={dist:.2f}m -> DONE'
-                )
+                self.get_logger().info(f'COLLISION at dist={dist:.2f}m -> DONE')
                 self._finish()
                 return
-
+    
         # ── Check target lost ──
         if self.target_lost_count > self.target_lost_threshold:
             self.get_logger().warn('Target lost! -> SEARCH')
