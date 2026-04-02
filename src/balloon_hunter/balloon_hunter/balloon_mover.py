@@ -43,7 +43,7 @@ class BalloonMover(Node):
         # Movement pattern: left | right | up | down | random
         self.declare_parameter('movement_pattern', 'left')
         # Balloon speed [m/s]
-        self.declare_parameter('speed', 0.5)
+        self.declare_parameter('speed', 0.1)
         # Position update frequency [Hz]
         self.declare_parameter('update_rate', 20.0)
         # Initial balloon position in Gazebo ENU world frame [m]

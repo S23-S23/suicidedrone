@@ -7,6 +7,7 @@ ground_truth_target_provider 노드로 대체.
 """
 
 import os
+from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -170,7 +171,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'takeoff_height': 6.0,
+            'takeoff_height': 2.5,
             'forward_speed': 2.0,
             'forward_distance_limit': 50.0,
         }]
@@ -226,6 +227,26 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
+    # ── ros2 bag recording (mcap) ────────────────────────────────────────────
+    # Records all topics.  Output directory: <bag_dir>/balloon_hunt_<timestamp>
+    # Storage format: mcap  (install: ros-$ROS_DISTRO-rosbag2-storage-mcap)
+    bag_enable = LaunchConfiguration('bag_enable').perform(context).lower()
+    bag_actions = []
+    if bag_enable != 'false':
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        bag_dir   = LaunchConfiguration('bag_dir').perform(context)
+        bag_path  = os.path.join(bag_dir, f'balloon_hunt_{timestamp}')
+        os.makedirs(bag_dir, exist_ok=True)
+        bag_actions.append(ExecuteProcess(
+            cmd=[
+                'ros2', 'bag', 'record',
+                '--all',
+                '--storage', 'mcap',
+                '--output', bag_path,
+            ],
+            output='screen',
+        ))
+
     # Balloon Mover
     # Moves the target balloon when the drone enters FORWARD state.
     # movement_pattern driven by the 'move' launch argument.
@@ -263,6 +284,7 @@ def launch_setup(context, *args, **kwargs):
         rviz_node,
         mission_logger,
         balloon_mover,         # moves target balloon on FORWARD state entry
+        *bag_actions,          # ros2 bag record (mcap) — empty list when bag_enable=false
     ]
 
 
@@ -285,7 +307,7 @@ def generate_launch_description():
         ),
         # PNG Guidance tuning parameters
         DeclareLaunchArgument(
-            'png_v_max',  default_value='5.0',
+            'png_v_max',  default_value='3.0',
             description='PNG max speed [m/s]'
         ),
         DeclareLaunchArgument(
@@ -293,7 +315,7 @@ def generate_launch_description():
             description='PNG initial speed on intercept entry [m/s]'
         ),
         DeclareLaunchArgument(
-            'png_ka',     default_value='1.0',
+            'png_ka',     default_value='2.0',
             description='PNG speed acceleration increment [m/s per second]'
         ),
         DeclareLaunchArgument(
@@ -301,8 +323,22 @@ def generate_launch_description():
             description='PNG elevation gain'
         ),
         DeclareLaunchArgument(
-            'png_Kz',     default_value='2.0',
+            'png_Kz',     default_value='4.0',
             description='PNG azimuth gain'
+        ),
+        # ros2 bag arguments
+        DeclareLaunchArgument(
+            'bag_enable',
+            default_value='true',
+            description='Enable ros2 bag recording: true | false'
+        ),
+        DeclareLaunchArgument(
+            'bag_dir',
+            # install/<pkg>/share/<pkg>  →  ../../../../log/rosbag  =  <ws>/log/rosbag
+            default_value=os.path.normpath(os.path.join(
+                get_package_share_directory('balloon_hunter'),
+                '..', '..', '..', '..', 'log', 'rosbag')),
+            description='Directory to save mcap bag files (default: <workspace>/log/rosbag)'
         ),
         OpaqueFunction(function=launch_setup),
     ])

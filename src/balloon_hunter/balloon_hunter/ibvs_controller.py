@@ -276,27 +276,155 @@ class IBVSController(Node):
             except Exception:
                 cv_img = None
             if cv_img is not None:
-                # Text overlay lines (top-left, descending)
+                h, w   = cv_img.shape[:2]
+                cx_img = int(self.cx)
+                cy_img = int(self.cy)
+                u_int  = int(round(u))
+                v_int  = int(round(v))
+
+                # ── 1. Balloon bounding box ─────────────────────────
+                bb_l = int(det.left);  bb_t = int(det.top)
+                bb_r = int(det.right); bb_b = int(det.bottom)
+                cv2.rectangle(cv_img, (bb_l, bb_t), (bb_r, bb_b), (0, 255, 0), 2)
+
+                # ── 2. Principal-point crosshair (image center) ─────
+                cv2.line(cv_img, (cx_img - 20, cy_img),
+                                  (cx_img + 20, cy_img), (0, 255, 255), 2)
+                cv2.line(cv_img, (cx_img, cy_img - 20),
+                                  (cx_img, cy_img + 20), (0, 255, 255), 2)
+                cv2.circle(cv_img, (cx_img, cy_img), 4, (0, 255, 255), 1)
+
+                # ── 3. Balloon center dot ───────────────────────────
+                cv2.circle(cv_img, (u_int, v_int), 7, (0, 60, 255), 2)
+                cv2.circle(cv_img, (u_int, v_int), 2, (0, 60, 255), -1)
+
+                # ── 4. Error vector arrow (center → balloon) ────────
+                # Shows LOS image error direction and magnitude
+                cv2.arrowedLine(cv_img, (cx_img, cy_img), (u_int, v_int),
+                                (0, 140, 255), 2, tipLength=0.2)
+
+                # ── 5. Horizontal error bar  ex  (bottom-center) ────
+                BAR_W  = w // 3
+                BAR_H  = 12
+                bx     = (w - BAR_W) // 2
+                by     = h - 28
+                cv2.rectangle(cv_img, (bx, by),
+                              (bx + BAR_W, by + BAR_H), (40, 40, 40), -1)
+                mid_bx = bx + BAR_W // 2
+                cv2.line(cv_img, (mid_bx, by - 2), (mid_bx, by + BAR_H + 2),
+                         (200, 200, 200), 1)
+                fill_ex = int(ex * self.fx)
+                fill_ex = max(-BAR_W // 2, min(BAR_W // 2, fill_ex))
+                col_ex  = (30, 200, 30) if abs(ex) < 0.1 else (0, 100, 255)
+                cv2.rectangle(cv_img, (mid_bx, by),
+                              (mid_bx + fill_ex, by + BAR_H), col_ex, -1)
+                cv2.rectangle(cv_img, (bx, by),
+                              (bx + BAR_W, by + BAR_H), (180, 180, 180), 1)
+                cv2.putText(cv_img, f'ex={ex:+.3f}', (bx, by - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+
+                # ── 6. Vertical error bar  ey  (right edge) ─────────
+                VB_W  = 12
+                VB_H  = h // 3
+                vbx   = w - 24
+                vby   = (h - VB_H) // 2
+                cv2.rectangle(cv_img, (vbx, vby),
+                              (vbx + VB_W, vby + VB_H), (40, 40, 40), -1)
+                mid_vy = vby + VB_H // 2
+                cv2.line(cv_img, (vbx - 2, mid_vy), (vbx + VB_W + 2, mid_vy),
+                         (200, 200, 200), 1)
+                fill_ey = int(ey * self.fy)
+                fill_ey = max(-VB_H // 2, min(VB_H // 2, fill_ey))
+                col_ey  = (30, 200, 30) if abs(ey) < 0.1 else (0, 100, 255)
+                cv2.rectangle(cv_img, (vbx, mid_vy),
+                              (vbx + VB_W, mid_vy + fill_ey), col_ey, -1)
+                cv2.rectangle(cv_img, (vbx, vby),
+                              (vbx + VB_W, vby + VB_H), (180, 180, 180), 1)
+                cv2.putText(cv_img, f'ey', (vbx - 2, vby - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+                cv2.putText(cv_img, f'{ey:+.2f}', (vbx - 10, vby + VB_H + 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+
+                # ── 7. Azimuth compass  q_z  (top-right circle) ─────
+                # Arrow points in the horizontal LOS direction (NED projected)
+                COMP_R  = 42
+                comp_cx = w - COMP_R - 12
+                comp_cy = COMP_R + 12
+                cv2.circle(cv_img, (comp_cx, comp_cy), COMP_R, (40, 40, 40), -1)
+                cv2.circle(cv_img, (comp_cx, comp_cy), COMP_R, (160, 160, 160), 1)
+                # North reference tick
+                cv2.line(cv_img,
+                         (comp_cx, comp_cy - COMP_R + 3),
+                         (comp_cx, comp_cy - COMP_R + 9), (200, 200, 200), 1)
+                az_ex = int(comp_cx + COMP_R * 0.75 * math.sin(q_z))
+                az_ey = int(comp_cy - COMP_R * 0.75 * math.cos(q_z))
+                cv2.arrowedLine(cv_img, (comp_cx, comp_cy),
+                                (az_ex, az_ey), (0, 255, 255), 2, tipLength=0.3)
+                cv2.putText(cv_img, f'q_z',
+                            (comp_cx - 10, comp_cy + COMP_R + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
+                cv2.putText(cv_img, f'{math.degrees(q_z):+.1f}',
+                            (comp_cx - 14, comp_cy + COMP_R + 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+
+                # ── 8. Elevation gauge  q_y  (below azimuth compass) ─
+                # Bar left of center = looking down, right = looking up
+                G_W   = COMP_R * 2
+                G_H   = 10
+                gx    = w - G_W - 12
+                gy    = comp_cy * 2 + 18
+                cv2.rectangle(cv_img, (gx, gy),
+                              (gx + G_W, gy + G_H), (40, 40, 40), -1)
+                mid_gx = gx + G_W // 2
+                cv2.line(cv_img, (mid_gx, gy - 2), (mid_gx, gy + G_H + 2),
+                         (200, 200, 200), 1)
+                MAX_EL   = math.radians(45.0)
+                fill_el  = int((q_y / MAX_EL) * (G_W // 2))
+                fill_el  = max(-G_W // 2, min(G_W // 2, fill_el))
+                col_el   = (50, 220, 50) if q_y > 0 else (0, 130, 255)
+                cv2.rectangle(cv_img, (mid_gx, gy),
+                              (mid_gx + fill_el, gy + G_H), col_el, -1)
+                cv2.rectangle(cv_img, (gx, gy),
+                              (gx + G_W, gy + G_H), (160, 160, 160), 1)
+                cv2.putText(cv_img, f'q_y {math.degrees(q_y):+.1f}',
+                            (gx, gy - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+
+                # ── 9. Yaw-rate indicator  (top-left circle) ────────
+                # Arrow angle proportional to commanded yaw rate
+                YAW_R  = 32
+                yc_cx  = YAW_R + 12
+                yc_cy  = YAW_R + 12
+                cv2.circle(cv_img, (yc_cx, yc_cy), YAW_R, (40, 40, 40), -1)
+                cv2.circle(cv_img, (yc_cx, yc_cy), YAW_R, (160, 160, 160), 1)
+                MAX_YR = 3.0
+                yr_ang = (fov_yaw_rate / MAX_YR) * math.pi
+                yr_ang = max(-math.pi, min(math.pi, yr_ang))
+                yr_ex  = int(yc_cx + YAW_R * 0.75 * math.sin(yr_ang))
+                yr_ey  = int(yc_cy - YAW_R * 0.75 * math.cos(yr_ang))
+                yr_col = (220, 0, 200) if abs(fov_yaw_rate) > 0.1 else (100, 100, 100)
+                cv2.arrowedLine(cv_img, (yc_cx, yc_cy),
+                                (yr_ex, yr_ey), yr_col, 2, tipLength=0.35)
+                cv2.putText(cv_img, 'YAW',
+                            (yc_cx - 13, yc_cy + YAW_R + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (220, 0, 200), 1)
+                cv2.putText(cv_img, f'{fov_yaw_rate:+.2f}',
+                            (yc_cx - 16, yc_cy + YAW_R + 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255), 1)
+
+                # ── 10. Compact text summary (bottom-left) ──────────
                 lines = [
-                    f'ex={ex:+.3f}  ey={ey:+.3f}',
-                    f'q_y={math.degrees(q_y):+.1f}deg  q_z={math.degrees(q_z):+.1f}deg',
-                    f'yaw_rate={fov_yaw_rate:+.3f} rad/s',
-                    f'b_omega_z={self.b_omega_z:+.3f} rad/s',
+                    f'q_y={math.degrees(q_y):+.1f}  q_z={math.degrees(q_z):+.1f} deg',
+                    f'yr={fov_yaw_rate:+.3f} rad/s',
                 ]
-                y0, dy = 20, 22
-                for i, line in enumerate(lines):
-                    y = y0 + i * dy
-                    # Black border for readability
-                    cv2.putText(cv_img, line, (8, y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
-                    # White text
-                    cv2.putText(cv_img, line, (8, y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-                # Crosshair at image center
-                h, w = cv_img.shape[:2]
-                cx_img, cy_img = w // 2, h // 2
-                cv2.line(cv_img, (cx_img - 15, cy_img), (cx_img + 15, cy_img), (0, 255, 255), 1)
-                cv2.line(cv_img, (cx_img, cy_img - 15), (cx_img, cy_img + 15), (0, 255, 255), 1)
+                ty = h - 48
+                for line in lines:
+                    cv2.putText(cv_img, line, (8, ty),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 0, 0), 3)
+                    cv2.putText(cv_img, line, (8, ty),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1)
+                    ty += 18
+
                 try:
                     debug_msg = self._bridge.cv2_to_imgmsg(cv_img, 'bgr8')
                     debug_msg.header = self._latest_img.header

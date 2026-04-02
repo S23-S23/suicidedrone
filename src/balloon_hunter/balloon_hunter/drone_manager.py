@@ -41,7 +41,7 @@ class BalloonHunterDroneManager(Node):
 
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('system_id',          1)
-        self.declare_parameter('takeoff_height',     6.0)
+        self.declare_parameter('takeoff_height',     2.0)
         self.declare_parameter('forward_speed',      2.0)
         self.declare_parameter('forward_distance_limit', 50.0)
 
@@ -138,8 +138,8 @@ class BalloonHunterDroneManager(Node):
         )
 
         # ── Timers ──────────────────────────────────────────────────────────
-        self.create_timer(0.1,  self.timer_ocm_callback)      # 10 Hz
-        self.create_timer(0.04, self.timer_mission_callback)  # 25 Hz
+        self.create_timer(0.02,  self.timer_ocm_callback)      # 50 Hz
+        self.create_timer(0.02, self.timer_mission_callback)  # 50 Hz
 
         # Single-shot: wait 5 s for PX4 before starting mission
         self.start_mission_timer = self.create_timer(5.0, self.start_mission)
@@ -204,12 +204,13 @@ class BalloonHunterDroneManager(Node):
     def timer_ocm_callback(self):
         msg           = OffboardControlMode()
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        # Once INTERCEPT has been entered, keep velocity mode permanently.
-        # Switching back to position mode during FORWARD hover causes PX4 to
-        # rebuild its velocity controller state, introducing a 0.5–1 s response
-        # lag every time the target is re-acquired.
+        # position=True + velocity=True: position feedback (고도/위치 유지) +
+        # velocity feedforward (빠른 응답). INTERCEPT에서는 현재 위치를
+        # position setpoint로 넘겨 position 오차=0이 되게 하고 velocity
+        # feedforward(PNG)로만 이동. FORWARD hover에서는 hover_pos를 position
+        # setpoint로 넘겨 position 피드백이 침하를 적극적으로 보정.
         if self.intercept_entered_once or self.state == MissionState.INTERCEPT:
-            msg.position = False
+            msg.position = True
             msg.velocity = True
         else:
             msg.position = True
@@ -233,9 +234,7 @@ class BalloonHunterDroneManager(Node):
 
         if self.state == MissionState.IDLE:
             safe_z = max(self.drone_pos[2], -0.1)
-            self._publish_position_setpoint(
-                [self.drone_pos[0], self.drone_pos[1], safe_z]
-            )
+            self._publish_position_setpoint([self.drone_pos[0], self.drone_pos[1], safe_z])
         elif self.state == MissionState.TAKEOFF:
             self.handle_takeoff()
         elif self.state == MissionState.FORWARD:
@@ -289,13 +288,14 @@ class BalloonHunterDroneManager(Node):
 
     def handle_forward(self):
         # ── Case A: target was lost during INTERCEPT → hover where we are ──
-        # Stay in velocity mode (OCM already locked to velocity=True) and
-        # command zero velocity.  A position setpoint would switch OCM back
-        # to position mode, causing a 0.5–1 s lag when target is re-acquired.
+        # position=True+velocity=True 모드에서 hover_pos를 position setpoint로,
+        # velocity=[0,0,0]을 feedforward로 전달. position 피드백이 고도 침하를
+        # 적극 보정하면서 velocity 모드를 유지해 재탐지 시 빠르게 INTERCEPT 복귀.
         if self.intercept_entered_once:
-            self._publish_velocity_setpoint([0.0, 0.0, 0.0], yawspeed=0.0)
+            hover = self.hover_pos if self.hover_pos is not None else self.drone_pos
+            self._publish_velocity_setpoint([0.0, 0.0, 0.0], pos=hover, yawspeed=0.0)
             self.get_logger().info(
-                '[DEBUG] FORWARD (hover, vel=0)',
+                f'[DEBUG] FORWARD (hover, pos=({hover[0]:.2f},{hover[1]:.2f},{hover[2]:.2f}))',
                 throttle_duration_sec=2.0,
             )
             return
@@ -328,17 +328,18 @@ class BalloonHunterDroneManager(Node):
 
     def handle_intercept(self):
         """
-        Velocity-control intercept using PNG guidance output.
-        Velocity setpoint: NED from /png/velocity_cmd           (Eq.10)
+        Position+Velocity feedforward intercept using PNG guidance output.
+        Position setpoint: 현재 드론 위치 (position 오차=0 → position 피드백 무력화)
+        Velocity setpoint: NED from /png/velocity_cmd           (Eq.10, feedforward)
         Yaw rate setpoint: from /ibvs/fov_yaw_rate              (Eq.13)
         """
         if self.vel_cmd is None:
             # No velocity command yet – hover until PNG publishes
-            self._publish_velocity_setpoint([0.0, 0.0, 0.0], yawspeed=0.0)
+            self._publish_velocity_setpoint([0.0, 0.0, 0.0], pos=self.drone_pos, yawspeed=0.0)
             return
 
         self._publish_velocity_setpoint(
-            self.vel_cmd, yawspeed=self.fov_yaw_rate
+            self.vel_cmd, pos=self.drone_pos, yawspeed=self.fov_yaw_rate
         )
 
         self.get_logger().info(
@@ -364,14 +365,19 @@ class BalloonHunterDroneManager(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.traj_setpoint_publisher.publish(msg)
 
-    def _publish_velocity_setpoint(self, vel, yawspeed=0.0):
+    def _publish_velocity_setpoint(self, vel, pos=None, yawspeed=0.0):
         """
-        Send velocity setpoint in NED frame.
-        position must be NaN when using velocity control.
+        Send velocity (+ optional position feedforward) setpoint in NED frame.
+        pos: position setpoint [N, E, D]. None → NaN (velocity-only).
+             INTERCEPT: pos=drone_pos (오차=0, velocity feedforward만 작용)
+             FORWARD hover: pos=hover_pos (position 피드백으로 침하 보정)
         """
         nan = float('nan')
         msg          = TrajectorySetpoint()
-        msg.position = [nan, nan, nan]
+        if pos is not None:
+            msg.position = [float(pos[0]), float(pos[1]), float(pos[2])]
+        else:
+            msg.position = [nan, nan, nan]
         msg.velocity = [float(vel[0]), float(vel[1]), float(vel[2])]
         msg.yaw      = nan
         msg.yawspeed = float(yawspeed)

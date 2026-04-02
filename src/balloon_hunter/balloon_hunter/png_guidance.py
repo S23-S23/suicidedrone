@@ -58,8 +58,8 @@ class PNGGuidance(Node):
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('system_id', 1)
         # PNG navigation gains (Eq.9) – typically 3 to 5
-        self.declare_parameter('Ky', 1.0)     # elevation gain
-        self.declare_parameter('Kz', 1.0)     # azimuth gain
+        self.declare_parameter('Ky', 3.0)     # elevation gain  (N' = K+1 = 4)
+        self.declare_parameter('Kz', 3.0)     # azimuth gain
         # Speed ramp (Eq.14)
         self.declare_parameter('ka',    0.2)  # acceleration increment [m/s per second]
         self.declare_parameter('v_max',  2.0) # maximum speed [m/s]
@@ -86,15 +86,13 @@ class PNGGuidance(Node):
         self.q_z_prev    = 0.0        # previous LOS azimuth   [rad]
         self.q_y_now     = 0.0        # current  LOS elevation [rad]
         self.q_z_now     = 0.0        # current  LOS azimuth   [rad]
+        # Time-normalized LOS rate [rad/s] — camera-rate-independent PNG lead
+        self.los_rate_y  = 0.0        # LOS elevation rate [rad/s]
+        self.los_rate_z  = 0.0        # LOS azimuth rate   [rad/s]
+        self._los_prev_time = None    # ROS Time of last LOS measurement
         self.v_now       = self.v_init  # current speed magnitude [m/s]
         self.los_received      = False
         self.prev_detected     = False
-        # On the very first guidance step after (re-)entry into INTERCEPT,
-        # sigma_current from body heading diverges from the LOS direction
-        # because the drone was hovering level while the balloon is below.
-        # Using body heading would give sigma_yd ≈ 0 → no descent, or
-        # worse, sigma_y > 0 (backward tilt from PX4 oscillation) → climb.
-        # Fix: for the first step, aim sigma directly at the LOS angles.
         self.first_guidance_step = True
 
         # ── Subscriptions ───────────────────────────────────────────────────
@@ -124,7 +122,7 @@ class PNGGuidance(Node):
         )
 
         # ── Publisher ───────────────────────────────────────────────────────
-        self.vel_cmd_pub    = self.create_publisher(Twist,   '/png/velocity_cmd',      10)
+        self.vel_cmd_pub    = self.create_publisher(Twist,   '/png/velocity_cmd',      25)
 
         # PNG diagnostic topics (for analysis)
         self.pub_sigma_cur  = self.create_publisher(Vector3, '/png/sigma_current_deg', 10)
@@ -152,24 +150,33 @@ class PNGGuidance(Node):
 
     def los_callback(self, msg: Vector3):
         """
-        Receive LOS angles from IBVSController.
-        Shift current → previous before updating (for discrete PNG Eq.9).
+        Receive LOS angles from IBVSController and compute time-normalized LOS rate.
 
-        On the very first measurement (or after re-acquisition reset),
-        initialize prev == now so the initial LOS rate is zero.
-        This prevents a large spurious Eq.(9) correction on the first step
-        caused by (q_now − 0) when prev was never set.
+        los_rate [rad/s] = (q_now − q_prev) / dt_los
+
+        Normalizing by actual measurement interval dt_los makes the PNG lead
+        independent of camera frame rate.  Without normalization, a 10 Hz camera
+        gives 2× the raw delta of a 20 Hz camera, making the effective K gain
+        vary unpredictably with detection rate.
         """
+        now = self.get_clock().now()
         if not self.los_received:
-            # First valid measurement: no history yet → rate = 0
-            self.q_y_prev = msg.x
-            self.q_z_prev = msg.y
+            # First measurement: no history → rate = 0
+            self.q_y_prev    = msg.x
+            self.q_z_prev    = msg.y
+            self.los_rate_y  = 0.0
+            self.los_rate_z  = 0.0
         else:
+            dt = (now - self._los_prev_time).nanoseconds / 1e9
+            if dt > 1e-4:   # guard against duplicate messages
+                self.los_rate_y = (msg.x - self.q_y_now) / dt   # [rad/s]
+                self.los_rate_z = (msg.y - self.q_z_now) / dt   # [rad/s]
             self.q_y_prev = self.q_y_now
             self.q_z_prev = self.q_z_now
-        self.q_y_now  = msg.x   # elevation
-        self.q_z_now  = msg.y   # azimuth
-        self.los_received = True
+        self._los_prev_time = now
+        self.q_y_now        = msg.x   # elevation
+        self.q_z_now        = msg.y   # azimuth
+        self.los_received   = True
 
     def target_detected_callback(self, msg: Bool):
         """Reset LOS history and first-step flag on target re-acquisition.
@@ -177,11 +184,12 @@ class PNGGuidance(Node):
         at the speed it had when the target was lost, avoiding a slow restart
         that lets a moving balloon escape."""
         if msg.data and not self.prev_detected:
-            # Reset LOS history so the first PNG step after re-acquisition
-            # uses rate = 0 instead of stale prev values from before target loss
-            self.los_received = False
-            # Force first-step direct-aim behavior on re-entry
+            # Reset LOS history and rate so stale values from before target loss
+            # don't produce a spurious lead correction on re-acquisition
+            self.los_received        = False
             self.first_guidance_step = True
+            self.los_rate_y          = 0.0
+            self.los_rate_z          = 0.0
             self.get_logger().info(
                 f'PNG: target re-acquired, speed maintained={self.v_now:.2f} m/s'
             )
@@ -218,38 +226,23 @@ class PNGGuidance(Node):
 
         # Eq.(9): Discrete PNG – desired velocity direction angles
         #
-        # First-step override: on INTERCEPT entry the drone is hovering level
-        # (sigma_y ≈ 0) while the balloon may be well below (q_y ≈ -15°).
-        # Using sigma_current = 0 gives sigma_yd ≈ 0 → no initial descent.
-        # Worse, any backward body tilt from PX4 oscillation yields sigma_y > 0
-        # → positive sigma_yd → upward velocity command ("goes up first" symptom).
+        # sigma_d = q_now + K * los_rate [rad/s] * dt_guidance [s]
         #
-        # Fix: on the first guidance step, set sigma_d = q_now so the drone
-        # immediately aims at the LOS direction.  Subsequent steps use the
-        # normal PNG law which tracks LOS rate changes from this baseline.
-        # Eq.(9): Discrete PNG – desired velocity direction angles
+        # Using time-normalized LOS rate (rad/s) instead of raw Δq (rad/frame):
+        #   - Makes effective gain K independent of camera frame rate
+        #   - Raw Δq at 10 Hz camera is 2× larger than at 20 Hz for the same
+        #     target motion → effective gain fluctuates unpredictably
+        #   - With rate-normalization: lead = K * rate * dt_guidance per step,
+        #     which is consistent regardless of when the last LOS arrived
         #
-        # Baseline: q_now (current LOS angle) instead of sigma_current.
-        #
-        # Original formulation uses sigma_current (actual velocity direction) as
-        # the baseline.  This fails for a multirotor in velocity control because:
-        #   - sigma_y ≈ 0 (horizontal flight) when the balloon is clearly below
-        #   - LOS rate ≈ 0 (q_y stable at -15°, stationary balloon on steady approach)
-        #   - → sigma_yd = Ky*0 + 0 = 0 → no descent command (deadlock)
-        #
-        # Fix: use q_now as the baseline so the drone always aims at the current
-        # LOS direction.  The Ky/Kz rate term still provides lead for moving targets.
-        #   sigma_yd = q_y_now + Ky*(q_y_now - q_y_prev)
-        #   sigma_zd = q_z_now + Kz*(q_z_now - q_z_prev)
-        # For a stationary target: sigma_d = q_now → always aims at the balloon.
-        # For a moving target: rate correction shifts sigma ahead of the LOS.
+        # On first step los_rate = 0 → sigma_d = q_now (direct aim at balloon)
         if self.first_guidance_step:
-            # First step: rate = 0 (prev == now), so sigma_d = q_now exactly
             self.first_guidance_step = False
-            self.get_logger().info('PNG first step: baseline = q_now (rate=0)')
+            self.get_logger().info('PNG first step: los_rate=0, sigma_d = q_now')
 
-        sigma_yd = self.q_y_now + self.Ky * (self.q_y_now - self.q_y_prev)
-        sigma_zd = self.q_z_now + self.Kz * (self.q_z_now - self.q_z_prev)
+        dt_guidance = 1.0 / self.rate
+        sigma_yd = self.q_y_now + self.Ky * self.los_rate_y * dt_guidance
+        sigma_zd = self.q_z_now + self.Kz * self.los_rate_z * dt_guidance
 
         # Eq.(14): Speed update with constant acceleration increment
         self.v_now = min(self.v_now + self.ka / self.rate, self.v_max)
@@ -285,10 +278,10 @@ class PNGGuidance(Node):
         msg_sd.y = math.degrees(sigma_zd)
         self.pub_sigma_des.publish(msg_sd)
 
-        # LOS rate (q_now - q_prev) [deg/step]
+        # LOS rate [deg/s]
         msg_lr   = Vector3()
-        msg_lr.x = math.degrees(self.q_y_now - self.q_y_prev)
-        msg_lr.y = math.degrees(self.q_z_now - self.q_z_prev)
+        msg_lr.x = math.degrees(self.los_rate_y)
+        msg_lr.y = math.degrees(self.los_rate_z)
         self.pub_los_rate.publish(msg_lr)
 
         # Speed info: v_now[m/s], actual_speed[m/s], sigma_source(0=vel, 1=body)
