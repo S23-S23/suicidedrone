@@ -68,7 +68,8 @@ class BalloonHunterDroneManager(Node):
         # INTERCEPT inputs (from IBVS + PNG)
         self.target_detected  = False
         self.vel_cmd          = None    # NED velocity [m/s] from PNG
-        self.fov_yaw_rate     = 0.0    # [rad/s] from IBVS
+        self.fov_yaw_rate     = 0.0    # [rad/s] from IBVS (horizontal, Eq.13)
+        self.fov_vel_z        = 0.0    # [m/s] NED Z correction from IBVS ey
         self.collision_done   = False
 
         # Set when INTERCEPT is entered for the first time.
@@ -115,11 +116,18 @@ class BalloonHunterDroneManager(Node):
             self.target_detected_callback,
             10,
         )
-        # IBVS: FOV yaw rate command (Eq.13)
+        # IBVS: FOV yaw rate command (Eq.13, horizontal)
         self.create_subscription(
             Float64,
             '/ibvs/fov_yaw_rate',
             self.fov_yaw_rate_callback,
+            10,
+        )
+        # IBVS: FOV Z velocity correction (ey-based, vertical)
+        self.create_subscription(
+            Float64,
+            '/ibvs/fov_vel_z',
+            self.fov_vel_z_callback,
             10,
         )
         # PNG: velocity command (Eq.10)
@@ -178,8 +186,12 @@ class BalloonHunterDroneManager(Node):
             self.state = MissionState.FORWARD
 
     def fov_yaw_rate_callback(self, msg: Float64):
-        """FOV yaw rate command from IBVS (Eq.13)."""
+        """FOV yaw rate command from IBVS (Eq.13, horizontal)."""
         self.fov_yaw_rate = msg.data
+
+    def fov_vel_z_callback(self, msg: Float64):
+        """NED Z velocity correction from IBVS ey (vertical centering)."""
+        self.fov_vel_z = msg.data
 
     def vel_cmd_callback(self, msg: Twist):
         """NED velocity command from PNG guidance (Eq.10)."""
@@ -328,23 +340,27 @@ class BalloonHunterDroneManager(Node):
 
     def handle_intercept(self):
         """
-        Position+Velocity feedforward intercept using PNG guidance output.
+        Position+Velocity feedforward intercept using PNG guidance + IBVS ey correction.
         Position setpoint: 현재 드론 위치 (position 오차=0 → position 피드백 무력화)
-        Velocity setpoint: NED from /png/velocity_cmd           (Eq.10, feedforward)
-        Yaw rate setpoint: from /ibvs/fov_yaw_rate              (Eq.13)
+        Velocity setpoint: PNG Eq.10 + IBVS fov_vel_z (Z 이미지 중심 보정)
+        Yaw rate setpoint: IBVS fov_yaw_rate Eq.13 (수평 이미지 중심 보정)
         """
         if self.vel_cmd is None:
             # No velocity command yet – hover until PNG publishes
             self._publish_velocity_setpoint([0.0, 0.0, 0.0], pos=self.drone_pos, yawspeed=0.0)
             return
 
+        # PNG velocity + IBVS ey Z-correction
+        vel = self.vel_cmd.copy()
+        vel[2] += self.fov_vel_z
+
         self._publish_velocity_setpoint(
-            self.vel_cmd, pos=self.drone_pos, yawspeed=self.fov_yaw_rate
+            vel, pos=self.drone_pos, yawspeed=self.fov_yaw_rate
         )
 
         self.get_logger().info(
-            f'[DEBUG] INTERCEPT: v=({self.vel_cmd[0]:.2f},{self.vel_cmd[1]:.2f},'
-            f'{self.vel_cmd[2]:.2f}), yaw_rate={self.fov_yaw_rate:.3f}',
+            f'[DEBUG] INTERCEPT: png_v=({self.vel_cmd[0]:.2f},{self.vel_cmd[1]:.2f},'
+            f'{self.vel_cmd[2]:.2f}) fov_vz={self.fov_vel_z:.3f} yr={self.fov_yaw_rate:.3f}',
             throttle_duration_sec=1.0,
         )
 

@@ -64,8 +64,11 @@ class IBVSController(Node):
         self.declare_parameter('cx', 320.0)
         self.declare_parameter('cy', 180.0)
         # FOV yaw controller gains (Eq.13)
-        self.declare_parameter('fov_kp', 1.5)
-        self.declare_parameter('fov_kd', 0.1)
+        self.declare_parameter('fov_kp',   1.5)
+        self.declare_parameter('fov_kd',   0.1)
+        # FOV vertical (ey) velocity controller gains — analogous to Eq.13 for Z axis
+        self.declare_parameter('fov_kp_z', 1.5)
+        self.declare_parameter('fov_kd_z', 0.1)
         # Seconds without detection before target_detected → False
         self.declare_parameter('target_timeout', 0.5)
 
@@ -76,6 +79,8 @@ class IBVSController(Node):
         self.cy            = self.get_parameter('cy').value
         self.fov_kp        = self.get_parameter('fov_kp').value
         self.fov_kd        = self.get_parameter('fov_kd').value
+        self.fov_kp_z      = self.get_parameter('fov_kp_z').value
+        self.fov_kd_z      = self.get_parameter('fov_kd_z').value
         self.target_timeout = self.get_parameter('target_timeout').value
 
         # ── Camera (OpenCV) → Body (FRD) rotation matrix ───────────────────
@@ -91,6 +96,7 @@ class IBVSController(Node):
 
         # ── Runtime state ───────────────────────────────────────────────────
         self.R_e_b             = np.eye(3)   # FRD → NED rotation (Eq.5)
+        self.b_omega_y         = 0.0         # body pitch rate [rad/s] (ey controller)
         self.b_omega_z         = 0.0         # body yaw rate [rad/s] (Eq.13)
         self._last_q           = np.array([1.0, 0.0, 0.0, 0.0])  # attitude quaternion [w,x,y,z]
         self.last_detect_time  = None        # for timeout check
@@ -130,6 +136,7 @@ class IBVSController(Node):
         self.pub_los        = self.create_publisher(Vector3, '/ibvs/los_angles',        10)
         self.pub_img_err    = self.create_publisher(Vector3, '/ibvs/image_error',       10)
         self.pub_yaw_rate   = self.create_publisher(Float64, '/ibvs/fov_yaw_rate',      10)
+        self.pub_fov_vel_z  = self.create_publisher(Float64, '/ibvs/fov_vel_z',         10)
 
         # Publish IBVS debug image
         self.pub_debug_img  = self.create_publisher(Image,   '/ibvs/debug_image',       10)
@@ -164,7 +171,10 @@ class IBVSController(Node):
                                   float(msg.q[2]), float(msg.q[3])])
 
     def angular_velocity_callback(self, msg: VehicleAngularVelocity):
-        """Store body yaw rate from IMU. FRD xyz[2] = yaw rate [rad/s]."""
+        """Store body angular rates from IMU (FRD frame).
+        xyz[1] = pitch rate (positive = nose down), xyz[2] = yaw rate.
+        """
+        self.b_omega_y = float(msg.xyz[1])
         self.b_omega_z = float(msg.xyz[2])
 
     # ── Detection callback ───────────────────────────────────────────────────
@@ -213,8 +223,15 @@ class IBVSController(Node):
         #   From interaction matrix (Eq.4) for pure yaw motion:
         #     ė_x ≈ −(1 + ex²) · b_ω_z          (Eq.26 in paper)
         #   IMU measurement replaces noisy numerical differentiation of ex
-        ex_dot     = -(1.0 + ex**2) * self.b_omega_z
+        ex_dot       = -(1.0 + ex**2) * self.b_omega_z
         fov_yaw_rate = self.fov_kp * ex + self.fov_kd * ex_dot
+
+        # Vertical (ey) image-plane controller — analogous to Eq.13 for Z axis
+        #   ė_y ≈ −(1 + ey²) · b_ω_y  (pitch rate, FRD y-axis, cam x-axis rotation)
+        #   Output: NED Z velocity correction [m/s]
+        #     ey > 0 → balloon below image center → drone descends (+NED z) → balloon rises ✓
+        ey_dot    = -(1.0 + ey**2) * self.b_omega_y
+        fov_vel_z = self.fov_kp_z * ey + self.fov_kd_z * ey_dot
 
         # ── Publish ──────────────────────────────────────────────────────────
         self.last_detect_time = self.get_clock().now()
@@ -261,6 +278,10 @@ class IBVSController(Node):
         yaw_msg      = Float64()
         yaw_msg.data = float(fov_yaw_rate)
         self.pub_yaw_rate.publish(yaw_msg)
+
+        vel_z_msg      = Float64()
+        vel_z_msg.data = float(fov_vel_z)
+        self.pub_fov_vel_z.publish(vel_z_msg)
 
         self.get_logger().info(
             f'IBVS: u={u:.0f}px, ex={ex:.3f}, ey={ey:.3f}, '

@@ -127,7 +127,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # [IBVS] Image-Based Visual Servoing Controller
-    # Computes LOS angles (Eq.5,7), image error (Eq.3), FOV yaw rate (Eq.13)
+    # Computes LOS angles (Eq.5,7), image error (Eq.3), FOV yaw/Z rate (Eq.13)
     ibvs_controller = Node(
         package='balloon_hunter',
         executable='ibvs_controller',
@@ -139,8 +139,10 @@ def launch_setup(context, *args, **kwargs):
             'fy': 205.5,
             'cx': 320.0,
             'cy': 180.0,
-            'fov_kp': 1.5,
-            'fov_kd': 0.1,
+            'fov_kp':   1.5,
+            'fov_kd':   0.1,
+            'fov_kp_z': LaunchConfiguration('ibvs_kp_z'),
+            'fov_kd_z': LaunchConfiguration('ibvs_kd_z'),
             'target_timeout': 1.5,
         }]
     )
@@ -171,7 +173,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'takeoff_height': 2.5,
+            'takeoff_height': 5.5,
             'forward_speed': 2.0,
             'forward_distance_limit': 50.0,
         }]
@@ -304,6 +306,15 @@ def generate_launch_description():
             'move',
             default_value='left',
             description='Balloon movement pattern: left | right | up | down | random | none'
+        ),
+        # IBVS vertical (ey) controller gains
+        DeclareLaunchArgument(
+            'ibvs_kp_z', default_value='1.5',
+            description='IBVS ey Z-velocity gain (vertical image centering)'
+        ),
+        DeclareLaunchArgument(
+            'ibvs_kd_z', default_value='0.1',
+            description='IBVS ey_dot Z-velocity derivative gain'
         ),
         # PNG Guidance tuning parameters
         DeclareLaunchArgument(
