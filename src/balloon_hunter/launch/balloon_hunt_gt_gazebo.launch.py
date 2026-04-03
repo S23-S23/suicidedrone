@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Balloon Hunter - Ground Truth Mode Launch File
-YOLO + position_estimator 대신 Gazebo Ground Truth를 사용한다.
-balloon_detector, position_estimator 노드를 제거하고
-ground_truth_target_provider 노드로 대체.
+Uses Gazebo Ground Truth instead of YOLO + position_estimator.
+Removes the balloon_detector and position_estimator nodes and
+replaces them with the ground_truth_target_provider node.
 """
 
 import os
@@ -107,8 +107,8 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    # [GT] Ground Truth Balloon Detector (balloon_detector YOLO 대체)
-    # 출력: /Yolov8_Inference_{id}  →  position_estimator 가 그대로 수신
+    # [GT] Ground Truth Balloon Detector (replaces YOLO-based balloon_detector)
+    # Output: /Yolov8_Inference_{id}  →  received by position_estimator as-is
     gt_balloon_detector = Node(
         package='balloon_hunter',
         executable='gt_balloon_detector',
@@ -193,7 +193,7 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # Drone Visualizer (RViz2용 TF/Path)
+    # Drone Visualizer (TF/Path for RViz2)
     drone_visualizer = Node(
         package='balloon_hunter',
         executable='drone_visualizer',
