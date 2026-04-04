@@ -144,7 +144,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'system_id': drone_id,
-            'detection_topic': f'/Yolov8_Inference_{drone_id}',
+            'detection_topic': '/target_info',
             'position_topic': f'/drone{drone_id}/fmu/out/vehicle_local_position',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
             'target_position_topic': '/balloon_target_position'

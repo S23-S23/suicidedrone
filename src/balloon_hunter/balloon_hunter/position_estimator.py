@@ -11,7 +11,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import PoseStamped
-from yolov8_msgs.msg import Yolov8Inference
+from suicide_drone_msgs.msg import TargetInfo
 from px4_msgs.msg import Monitoring
 
 
@@ -52,7 +52,7 @@ class PositionEstimator(Node):
 
         # Topics
         self.declare_parameter('system_id', 1)
-        self.declare_parameter('detection_topic', '/Yolov8_Inference_1')
+        self.declare_parameter('detection_topic', '/target_info')
         self.declare_parameter('position_topic', '/drone1/fmu/out/vehicle_local_position')
         self.declare_parameter('monitoring_topic', '/drone1/fmu/out/monitoring')
         self.declare_parameter('target_position_topic', '/balloon_target_position')
@@ -106,7 +106,7 @@ class PositionEstimator(Node):
 
         # Subscribers
         self.detection_sub = self.create_subscription(
-            Yolov8Inference,
+            TargetInfo,
             self.detection_topic,
             self.detection_callback,
             10
@@ -138,16 +138,11 @@ class PositionEstimator(Node):
         self.drone_pitch = msg.pitch 
         self.get_logger().info(f'[DEBUG] Pos: ({msg.pos_x:.2f}, {msg.pos_y:.2f}, {msg.pos_z:.2f}), Y={msg.head:.3f}, P={msg.pitch:.3f}', throttle_duration_sec=5.0)
 
-    def detection_callback(self, msg: Yolov8Inference):
+    def detection_callback(self, msg: TargetInfo):
         """Process detections and estimate 3D position"""
-        self.get_logger().info(f'[DEBUG] Position estimator: Detection callback triggered, detections={len(msg.yolov8_inference)}', throttle_duration_sec=2.0)
+        self.get_logger().info(f'[DEBUG] Position estimator: Detection callback triggered', throttle_duration_sec=2.0)
 
-        if not msg.yolov8_inference:
-            self.get_logger().warn('[DEBUG] Position estimator: No detections in message', throttle_duration_sec=2.0)
-            return
-
-        # Process first detection only
-        det = msg.yolov8_inference[0]
+        det = msg
 
         # Use bottom center of bounding box
         u = (det.left + det.right) * 0.5

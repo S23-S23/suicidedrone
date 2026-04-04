@@ -40,7 +40,7 @@ Input  (identical to balloon_detector):
   /gazebo/link_states           - camera link 6-DOF pose (position + orientation)
 
 Output (identical to balloon_detector):
-  /Yolov8_Inference_{id}        - yolov8_msgs/Yolov8Inference (bounding box)
+  /target_info                  - suicide_drone_msgs/TargetInfo (bounding box)
   /inference_result_{id}        - sensor_msgs/Image (annotated visualization)
 """
 
@@ -54,7 +54,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from sensor_msgs.msg import Image
 from gazebo_msgs.msg import ModelStates, LinkStates
-from yolov8_msgs.msg import InferenceResult, Yolov8Inference
+from suicide_drone_msgs.msg import TargetInfo
 from cv_bridge import CvBridge
 
 bridge = CvBridge()
@@ -92,7 +92,7 @@ def quat_to_R_world_to_frame(q) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 class GtBalloonDetector(Node):
     def __init__(self):
-        super().__init__('balloon_detector')  # keep same node name as YOLO version
+        super().__init__('target_detector')  # keep same node name as YOLO version
 
         # --- Parameters (same structure as balloon_detector) ----------------
         self.declare_parameter('system_id', 1)
@@ -145,7 +145,7 @@ class GtBalloonDetector(Node):
         self.create_subscription(LinkStates,  '/gazebo/link_states',  self.link_states_callback,  10)
 
         # --- Publishers (identical topics/types to balloon_detector) --------
-        self.yolov8_pub = self.create_publisher(Yolov8Inference, f'/Yolov8_Inference_{sid}', 10)
+        self.target_pub = self.create_publisher(TargetInfo, '/target_info', 10)
         self.img_pub    = self.create_publisher(Image,           f'/inference_result_{sid}',  10)
 
         self.get_logger().info(
@@ -205,7 +205,7 @@ class GtBalloonDetector(Node):
     #  Main callback                                                            #
     # ----------------------------------------------------------------------- #
     def camera_callback(self, msg: Image):
-        """Project balloon GT position onto the image and publish Yolov8Inference."""
+        """Project balloon GT position onto the image and publish TargetInfo."""
         try:
             cv_img = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
@@ -263,20 +263,18 @@ class GtBalloonDetector(Node):
         in_fov = (right > 0 and left < self.width and
                   bottom > 0 and top < self.height)
 
-        # --- Publish Yolov8Inference when balloon is within the FOV ---------
-        yolo_msg        = Yolov8Inference()
-        yolo_msg.header = msg.header
+        # --- Publish TargetInfo when balloon is within the FOV ---------------
         if in_fov:
-            det            = InferenceResult()
-            det.class_name = 'balloon'
-            det.left       = max(left,   0)
-            det.top        = max(top,    0)
-            det.right      = min(right,  self.width  - 1)
-            det.bottom     = min(bottom, self.height - 1)
-            yolo_msg.yolov8_inference.append(det)
-            self.yolov8_pub.publish(yolo_msg)
+            target_msg            = TargetInfo()
+            target_msg.header     = msg.header
+            target_msg.class_name = 'balloon'
+            target_msg.left       = max(left,   0)
+            target_msg.top        = max(top,    0)
+            target_msg.right      = min(right,  self.width  - 1)
+            target_msg.bottom     = min(bottom, self.height - 1)
+            self.target_pub.publish(target_msg)
             self.get_logger().info(
-                f'[GT] DETECTED | bbox=({det.left},{det.top},{det.right},{det.bottom}) '
+                f'[GT] DETECTED | bbox=({target_msg.left},{target_msg.top},{target_msg.right},{target_msg.bottom}) '
                 f'center=({iu},{iv}) z={z_cam:.2f}m',
                 throttle_duration_sec=1.0,
             )

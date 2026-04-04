@@ -108,7 +108,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # [GT] Ground Truth Balloon Detector (replaces YOLO-based balloon_detector)
-    # Output: /Yolov8_Inference_{id}  →  received by position_estimator as-is
+    # Output: /target_info  →  received by ibvs_controller
     gt_balloon_detector = Node(
         package='balloon_hunter',
         executable='gt_balloon_detector',
@@ -263,7 +263,7 @@ def launch_setup(context, *args, **kwargs):
         jinja_process,
         spawn_entity_node,
         px4_process,
-        gt_balloon_detector,   # → /Yolov8_Inference_{id}
+        gt_balloon_detector,   # → /target_info
         ibvs_controller,       # → /ibvs/target_detected, /ibvs/los_angles, /ibvs/fov_yaw_rate
         png_guidance,          # → /png/velocity_cmd
         drone_manager,         # consumes ibvs + png outputs

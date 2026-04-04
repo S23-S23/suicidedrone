@@ -16,7 +16,7 @@
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>px4_msgs</depend>
-  <depend>yolov8_msgs</depend>
+  <depend>suicidedrone_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>visualization_msgs</depend>
   <depend>gazebo_msgs</depend>

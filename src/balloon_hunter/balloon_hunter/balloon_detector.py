@@ -12,7 +12,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-from yolov8_msgs.msg import InferenceResult, Yolov8Inference
+from suicide_drone_msgs.msg import TargetInfo
 import cv2
 
 bridge = CvBridge()
@@ -83,8 +83,8 @@ class BalloonDetector(Node):
 
         # Publishers
         self.yolov8_pub = self.create_publisher(
-            Yolov8Inference,
-            f'/Yolov8_Inference_{self.system_id}',
+            TargetInfo,
+            '/target_info',
             10
         )
 
@@ -112,17 +112,13 @@ class BalloonDetector(Node):
                 verbose=False
             )
 
-            # Process results
-            yolov8_inference = Yolov8Inference()
-            yolov8_inference.header = msg.header
-
+            # Process results — publish only the first matching detection
             if results and len(results) > 0:
                 result = results[0]
                 boxes = result.boxes
 
                 if boxes is not None and len(boxes) > 0:
                     for box in boxes:
-                        # Get box coordinates
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                         conf = float(box.conf[0].cpu().numpy())
                         cls_id = int(box.cls[0].cpu().numpy())
@@ -131,30 +127,26 @@ class BalloonDetector(Node):
                         if self.target_cls_id is not None and cls_id != self.target_cls_id:
                             continue
 
-                        # Create InferenceResult
-                        inference_result = InferenceResult()
-                        inference_result.class_name = self.model.names[cls_id]
-                        inference_result.left = int(x1)
-                        inference_result.top = int(y1)
-                        inference_result.right = int(x2)
-                        inference_result.bottom = int(y2)
-
-                        yolov8_inference.yolov8_inference.append(inference_result)
+                        # Publish first detection as TargetInfo
+                        target_info            = TargetInfo()
+                        target_info.header     = msg.header
+                        target_info.class_name = self.model.names[cls_id]
+                        target_info.left       = int(x1)
+                        target_info.top        = int(y1)
+                        target_info.right      = int(x2)
+                        target_info.bottom     = int(y2)
+                        self.yolov8_pub.publish(target_info)
 
                         # Draw on image
                         cv2.rectangle(cv_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-                        label = f'{inference_result.class_name}: {conf:.2f}'
+                        label = f'{self.model.names[cls_id]}: {conf:.2f}'
                         cv2.putText(cv_image, label, (int(x1), int(y1) - 10),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
-            # Publish results
-            if len(yolov8_inference.yolov8_inference) > 0:
-                self.yolov8_pub.publish(yolov8_inference)
-                det = yolov8_inference.yolov8_inference[0]
-                self.get_logger().info(
-                    f'[DEBUG] Publishing detection: {len(yolov8_inference.yolov8_inference)} target(s), bbox=({det.left},{det.top},{det.right},{det.bottom}), topic=/Yolov8_Inference_{self.system_id}',
-                    throttle_duration_sec=1.0
-                )
+                        self.get_logger().info(
+                            f'[DEBUG] Publishing detection: bbox=({int(x1)},{int(y1)},{int(x2)},{int(y2)}), topic=/target_info',
+                            throttle_duration_sec=1.0
+                        )
+                        break  # first target only
 
             # Publish visualization
             img_msg = bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')

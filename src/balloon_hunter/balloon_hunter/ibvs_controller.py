@@ -13,7 +13,7 @@ Equations implemented:
   Eq.(13): FOV yaw rate controller using IMU angular velocity (avoids numerical diff)
 
 Subscriptions:
-  /Yolov8_Inference_{id}              – gt_balloon_detector output
+  /target_info                        – gt_balloon_detector output
   drone{id}/fmu/out/vehicle_attitude  – quaternion FRD body → NED
   drone{id}/fmu/out/vehicle_angular_velocity – FRD body angular velocity
 
@@ -31,7 +31,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from px4_msgs.msg import VehicleAttitude, VehicleAngularVelocity
-from yolov8_msgs.msg import Yolov8Inference
+from suicide_drone_msgs.msg import TargetInfo
 from geometry_msgs.msg import Vector3
 from std_msgs.msg import Bool, Float64
 from sensor_msgs.msg import Image
@@ -105,8 +105,8 @@ class IBVSController(Node):
 
         # ── Subscriptions ───────────────────────────────────────────────────
         self.create_subscription(
-            Yolov8Inference,
-            f'/Yolov8_Inference_{system_id}',
+            TargetInfo,
+            '/target_info',
             self.detection_callback,
             10,
         )
@@ -143,9 +143,7 @@ class IBVSController(Node):
         # Timeout checker at 10 Hz
         self.create_timer(0.1, self._timeout_check)
 
-        self.get_logger().info(
-            f'IBVSController started: detection topic=/Yolov8_Inference_{system_id}'
-        )
+        self.get_logger().info('IBVSController started: detection topic=/target_info')
 
     # ── Image callback ───────────────────────────────────────────────────────
 
@@ -170,7 +168,7 @@ class IBVSController(Node):
 
     # ── Detection callback ───────────────────────────────────────────────────
 
-    def detection_callback(self, msg: Yolov8Inference):
+    def detection_callback(self, msg: TargetInfo):
         """
         Process the first detection and compute IBVS outputs.
 
@@ -179,10 +177,7 @@ class IBVSController(Node):
         Eq.(7):  q_y = atan2(-n_t_z, ||n_t_xy||),  q_z = atan2(n_t_y, n_t_x)
         Eq.(13): ω_yaw = kp*ex + kd*(−(1+ex²)*b_ω_z)
         """
-        if not msg.yolov8_inference:
-            return
-
-        det = msg.yolov8_inference[0]
+        det = msg
 
         # Bounding box center in pixels
         u = (det.left + det.right)  * 0.5
