@@ -39,7 +39,6 @@ setup(
             'drone_manager = balloon_hunter.drone_manager:main',
             'collision_handler = balloon_hunter.collision_handler:main',
             'drone_visualizer = balloon_hunter.drone_visualizer:main',
-            'ground_truth_target_provider = balloon_hunter.ground_truth_target_provider:main',
             'gt_balloon_detector = balloon_hunter.gt_balloon_detector:main',
             'ibvs_controller = balloon_hunter.ibvs_controller:main',
             'png_guidance = balloon_hunter.png_guidance:main',
