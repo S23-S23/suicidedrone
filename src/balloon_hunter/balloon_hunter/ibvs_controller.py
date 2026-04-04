@@ -18,10 +18,8 @@ Subscriptions:
   drone{id}/fmu/out/vehicle_angular_velocity – FRD body angular velocity
 
 Publications:
-  /ibvs/target_detected  (std_msgs/Bool)
-  /ibvs/los_angles       (geometry_msgs/Vector3: x=q_y elevation, y=q_z azimuth)
-  /ibvs/image_error      (geometry_msgs/Vector3: x=ex, y=ey)
-  /ibvs/fov_yaw_rate     (std_msgs/Float64) – commanded yaw rate for drone
+  /ibvs/output       (suicide_drone_msgs/IBVSOutput: detected, q_y elevation, q_z azimuth)
+  /ibvs/fov_yaw_rate (std_msgs/Float64) – commanded yaw rate for drone
 """
 
 import math
@@ -31,9 +29,8 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from px4_msgs.msg import VehicleAttitude, VehicleAngularVelocity
-from suicide_drone_msgs.msg import TargetInfo
-from geometry_msgs.msg import Vector3
-from std_msgs.msg import Bool, Float64
+from suicide_drone_msgs.msg import TargetInfo, IBVSOutput
+from std_msgs.msg import Float64
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
@@ -132,10 +129,9 @@ class IBVSController(Node):
         )
 
         # ── Publishers ──────────────────────────────────────────────────────
-        self.pub_detected   = self.create_publisher(Bool,    '/ibvs/target_detected',  10)
-        self.pub_los        = self.create_publisher(Vector3, '/ibvs/los_angles',        10)
-        self.pub_yaw_rate   = self.create_publisher(Float64, '/ibvs/fov_yaw_rate',      10)
-        self.pub_fov_vel_z  = self.create_publisher(Float64, '/ibvs/fov_vel_z',         10)
+        self.pub_ibvs       = self.create_publisher(IBVSOutput, '/ibvs/output',         10)
+        self.pub_yaw_rate   = self.create_publisher(Float64,    '/ibvs/fov_yaw_rate',   10)
+        self.pub_fov_vel_z  = self.create_publisher(Float64,    '/ibvs/fov_vel_z',      10)
 
         # Publish IBVS debug image
         self.pub_debug_img  = self.create_publisher(Image,   '/ibvs/debug_image',       10)
@@ -222,15 +218,12 @@ class IBVSController(Node):
         # ── Publish ──────────────────────────────────────────────────────────
         self.last_detect_time = self.get_clock().now()
 
-        det_msg      = Bool()
-        det_msg.data = True
-        self.pub_detected.publish(det_msg)
-
-        los_msg   = Vector3()
-        los_msg.x = q_y   # elevation  (used by PNG guidance Eq.9)
-        los_msg.y = q_z   # azimuth
-        los_msg.z = 0.0
-        self.pub_los.publish(los_msg)
+        ibvs_msg          = IBVSOutput()
+        ibvs_msg.header   = msg.header
+        ibvs_msg.detected = True
+        ibvs_msg.q_y      = q_y   # elevation  (used by PNG guidance Eq.9)
+        ibvs_msg.q_z      = q_z   # azimuth
+        self.pub_ibvs.publish(ibvs_msg)
 
         yaw_msg      = Float64()
         yaw_msg.data = float(fov_yaw_rate)
@@ -413,14 +406,17 @@ class IBVSController(Node):
     # ── Timeout ──────────────────────────────────────────────────────────────
 
     def _timeout_check(self):
-        """Publish target_detected=False when no detection for target_timeout seconds."""
+        """Publish detected=False when no detection for target_timeout seconds."""
         if self.last_detect_time is None:
             return
         elapsed = (self.get_clock().now() - self.last_detect_time).nanoseconds / 1e9
         if elapsed > self.target_timeout:
-            msg      = Bool()
-            msg.data = False
-            self.pub_detected.publish(msg)
+            ibvs_msg          = IBVSOutput()
+            ibvs_msg.header.stamp = self.get_clock().now().to_msg()
+            ibvs_msg.detected = False
+            ibvs_msg.q_y      = 0.0
+            ibvs_msg.q_z      = 0.0
+            self.pub_ibvs.publish(ibvs_msg)
 
 
 def main(args=None):

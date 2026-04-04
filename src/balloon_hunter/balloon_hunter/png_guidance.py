@@ -15,8 +15,7 @@ Equations implemented:
   Eq.(14): Speed update: v = v + ka/rate  (clamped to v_max)
 
 Subscriptions:
-  /ibvs/los_angles                         – LOS angles from IBVSController
-  /ibvs/target_detected                    – reset speed on re-acquisition
+  /ibvs/output                             – IBVSOutput (detected + LOS angles) from IBVSController
   drone{id}/fmu/out/vehicle_attitude       – quaternion FRD body → NED (fallback)
   drone{id}/fmu/out/vehicle_local_position – NED velocity for Eq.(8)
 
@@ -34,8 +33,8 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
-from geometry_msgs.msg import Vector3, Twist
-from std_msgs.msg import Bool
+from geometry_msgs.msg import Twist
+from suicide_drone_msgs.msg import IBVSOutput
 
 
 def quat_to_R(q):
@@ -97,15 +96,9 @@ class PNGGuidance(Node):
 
         # ── Subscriptions ───────────────────────────────────────────────────
         self.create_subscription(
-            Vector3,
-            '/ibvs/los_angles',
-            self.los_callback,
-            10,
-        )
-        self.create_subscription(
-            Bool,
-            '/ibvs/target_detected',
-            self.target_detected_callback,
+            IBVSOutput,
+            '/ibvs/output',
+            self.ibvs_output_callback,
             10,
         )
         self.create_subscription(
@@ -142,44 +135,21 @@ class PNGGuidance(Node):
         """Store actual NED velocity for Eq.(8) sigma computation."""
         self.v_ned = np.array([float(msg.vx), float(msg.vy), float(msg.vz)])
 
-    def los_callback(self, msg: Vector3):
+    def ibvs_output_callback(self, msg: IBVSOutput):
         """
-        Receive LOS angles from IBVSController and compute time-normalized LOS rate.
+        Receive IBVSOutput (detected + LOS angles) from IBVSController.
 
-        los_rate [rad/s] = (q_now − q_prev) / dt_los
-
-        Normalizing by actual measurement interval dt_los makes the PNG lead
-        independent of camera frame rate.  Without normalization, a 10 Hz camera
-        gives 2× the raw delta of a 20 Hz camera, making the effective K gain
-        vary unpredictably with detection rate.
-        """
-        now = self.get_clock().now()
-        if not self.los_received:
-            # First measurement: no history → rate = 0
-            self.q_y_prev    = msg.x
-            self.q_z_prev    = msg.y
-            self.los_rate_y  = 0.0
-            self.los_rate_z  = 0.0
-        else:
-            dt = (now - self._los_prev_time).nanoseconds / 1e9
-            if dt > 1e-4:   # guard against duplicate messages
-                self.los_rate_y = (msg.x - self.q_y_now) / dt   # [rad/s]
-                self.los_rate_z = (msg.y - self.q_z_now) / dt   # [rad/s]
-            self.q_y_prev = self.q_y_now
-            self.q_z_prev = self.q_z_now
-        self._los_prev_time = now
-        self.q_y_now        = msg.x   # elevation
-        self.q_z_now        = msg.y   # azimuth
-        self.los_received   = True
-
-    def target_detected_callback(self, msg: Bool):
-        """Reset LOS history and first-step flag on target re-acquisition.
+        On target re-acquisition (detected: False → True), reset LOS history.
         Speed is intentionally NOT reset so the drone immediately resumes
-        at the speed it had when the target was lost, avoiding a slow restart
-        that lets a moving balloon escape."""
-        if msg.data and not self.prev_detected:
-            # Reset LOS history and rate so stale values from before target loss
-            # don't produce a spurious lead correction on re-acquisition
+        at the speed it had when the target was lost.
+
+        When detected=True, update LOS angles and compute time-normalized LOS rate:
+          los_rate [rad/s] = (q_now − q_prev) / dt_los
+        Normalizing by actual dt_los makes the PNG lead independent of camera frame rate.
+        """
+        if msg.detected and not self.prev_detected:
+            # Target re-acquired: reset LOS history so stale values don't
+            # produce a spurious lead correction on re-acquisition
             self.los_received        = False
             self.first_guidance_step = True
             self.los_rate_y          = 0.0
@@ -187,7 +157,29 @@ class PNGGuidance(Node):
             self.get_logger().info(
                 f'PNG: target re-acquired, speed maintained={self.v_now:.2f} m/s'
             )
-        self.prev_detected = msg.data
+        self.prev_detected = msg.detected
+
+        if not msg.detected:
+            return
+
+        now = self.get_clock().now()
+        if not self.los_received:
+            # First measurement: no history → rate = 0
+            self.q_y_prev   = msg.q_y
+            self.q_z_prev   = msg.q_z
+            self.los_rate_y = 0.0
+            self.los_rate_z = 0.0
+        else:
+            dt = (now - self._los_prev_time).nanoseconds / 1e9
+            if dt > 1e-4:   # guard against duplicate messages
+                self.los_rate_y = (msg.q_y - self.q_y_now) / dt   # [rad/s]
+                self.los_rate_z = (msg.q_z - self.q_z_now) / dt   # [rad/s]
+            self.q_y_prev = self.q_y_now
+            self.q_z_prev = self.q_z_now
+        self._los_prev_time = now
+        self.q_y_now        = msg.q_y   # elevation
+        self.q_z_now        = msg.q_z   # azimuth
+        self.los_received   = True
 
     # ── Guidance loop ─────────────────────────────────────────────────────────
 

@@ -23,6 +23,7 @@ from px4_msgs.msg import (
 )
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String, Bool, Float64
+from suicide_drone_msgs.msg import IBVSOutput
 from enum import Enum
 import numpy as np
 
@@ -109,11 +110,11 @@ class BalloonHunterDroneManager(Node):
             qos_profile_sensor_data,
         )
 
-        # IBVS: target detection flag
+        # IBVS: detection flag + LOS angles (merged)
         self.create_subscription(
-            Bool,
-            '/ibvs/target_detected',
-            self.target_detected_callback,
+            IBVSOutput,
+            '/ibvs/output',
+            self.ibvs_output_callback,
             10,
         )
         # IBVS: FOV yaw rate command (Eq.13, horizontal)
@@ -168,19 +169,19 @@ class BalloonHunterDroneManager(Node):
 
     # ── IBVS / PNG / collision callbacks ─────────────────────────────────────
 
-    def target_detected_callback(self, msg: Bool):
-        self.target_detected = msg.data
+    def ibvs_output_callback(self, msg: IBVSOutput):
+        self.target_detected = msg.detected
 
         # Level-triggered: FORWARD → INTERCEPT whenever target is visible
         # Edge-triggered (not was_detected) is intentionally avoided:
         # the rising edge can occur during TAKEOFF before FORWARD is entered,
         # causing the transition to be permanently missed.
-        if msg.data and self.state == MissionState.FORWARD:
+        if msg.detected and self.state == MissionState.FORWARD:
             self.get_logger().info('Target detected! Switching to INTERCEPT.')
             self.intercept_entered_once = True
             self.state = MissionState.INTERCEPT
 
-        if not msg.data and self.state == MissionState.INTERCEPT:
+        if not msg.detected and self.state == MissionState.INTERCEPT:
             self.get_logger().warn('Target lost! Hovering in place (FORWARD).')
             self.hover_pos = self.drone_pos.copy()   # freeze current position
             self.state = MissionState.FORWARD
