@@ -18,6 +18,7 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TargetInfo.msg"
     "msg/IBVSOutput.msg"
+    "msg/GuidanceCmd.msg"
     DEPENDENCIES std_msgs
 )
 

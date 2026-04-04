@@ -30,7 +30,6 @@ from rclpy.qos import qos_profile_sensor_data
 
 from px4_msgs.msg import VehicleAttitude, VehicleAngularVelocity
 from suicide_drone_msgs.msg import TargetInfo, IBVSOutput
-from std_msgs.msg import Float64
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
@@ -129,9 +128,7 @@ class IBVSController(Node):
         )
 
         # ── Publishers ──────────────────────────────────────────────────────
-        self.pub_ibvs       = self.create_publisher(IBVSOutput, '/ibvs/output',         10)
-        self.pub_yaw_rate   = self.create_publisher(Float64,    '/ibvs/fov_yaw_rate',   10)
-        self.pub_fov_vel_z  = self.create_publisher(Float64,    '/ibvs/fov_vel_z',      10)
+        self.pub_ibvs = self.create_publisher(IBVSOutput, '/ibvs/output', 10)
 
         # Publish IBVS debug image
         self.pub_debug_img  = self.create_publisher(Image,   '/ibvs/debug_image',       10)
@@ -139,7 +136,7 @@ class IBVSController(Node):
         # Timeout checker at 10 Hz
         self.create_timer(0.1, self._timeout_check)
 
-        self.get_logger().info('IBVSController started: detection topic=/target_info')
+        self.get_logger().info('IBVSController started: /target_info → /ibvs/output')
 
     # ── Image callback ───────────────────────────────────────────────────────
 
@@ -218,20 +215,14 @@ class IBVSController(Node):
         # ── Publish ──────────────────────────────────────────────────────────
         self.last_detect_time = self.get_clock().now()
 
-        ibvs_msg          = IBVSOutput()
-        ibvs_msg.header   = msg.header
-        ibvs_msg.detected = True
-        ibvs_msg.q_y      = q_y   # elevation  (used by PNG guidance Eq.9)
-        ibvs_msg.q_z      = q_z   # azimuth
+        ibvs_msg             = IBVSOutput()
+        ibvs_msg.header      = msg.header
+        ibvs_msg.detected    = True
+        ibvs_msg.q_y         = q_y
+        ibvs_msg.q_z         = q_z
+        ibvs_msg.fov_yaw_rate = float(fov_yaw_rate)
+        ibvs_msg.fov_vel_z   = float(fov_vel_z)
         self.pub_ibvs.publish(ibvs_msg)
-
-        yaw_msg      = Float64()
-        yaw_msg.data = float(fov_yaw_rate)
-        self.pub_yaw_rate.publish(yaw_msg)
-
-        vel_z_msg      = Float64()
-        vel_z_msg.data = float(fov_vel_z)
-        self.pub_fov_vel_z.publish(vel_z_msg)
 
         self.get_logger().info(
             f'IBVS: u={u:.0f}px, ex={ex:.3f}, ey={ey:.3f}, '

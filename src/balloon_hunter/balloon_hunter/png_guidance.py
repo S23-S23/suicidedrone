@@ -15,15 +15,15 @@ Equations implemented:
   Eq.(14): Speed update: v = v + ka/rate  (clamped to v_max)
 
 Subscriptions:
-  /ibvs/output                             – IBVSOutput (detected + LOS angles) from IBVSController
+  /ibvs/output                             – IBVSOutput (detected, LOS angles, fov_yaw_rate, fov_vel_z)
   drone{id}/fmu/out/vehicle_attitude       – quaternion FRD body → NED (fallback)
   drone{id}/fmu/out/vehicle_local_position – NED velocity for Eq.(8)
 
 Publication:
-  /png/velocity_cmd  (geometry_msgs/Twist) – NED velocity command
-    linear.x = v_North [m/s]
-    linear.y = v_East  [m/s]
-    linear.z = v_Down  [m/s]
+  /png/guidance_cmd  (suicide_drone_msgs/GuidanceCmd) – complete guidance command
+    vel_n/e/d    = NED velocity [m/s]  (PNG Eq.10 + IBVS fov_vel_z Z correction)
+    yaw_rate     = yaw rate [rad/s]    (IBVS fov_yaw_rate Eq.13)
+    target_detected = detection flag pass-through
 """
 
 import math
@@ -33,8 +33,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
-from geometry_msgs.msg import Twist
-from suicide_drone_msgs.msg import IBVSOutput
+from suicide_drone_msgs.msg import IBVSOutput, GuidanceCmd
 
 
 def quat_to_R(q):
@@ -90,9 +89,11 @@ class PNGGuidance(Node):
         self.los_rate_z  = 0.0        # LOS azimuth rate   [rad/s]
         self._los_prev_time = None    # ROS Time of last LOS measurement
         self.v_now       = self.v_init  # current speed magnitude [m/s]
-        self.los_received      = False
-        self.prev_detected     = False
+        self.los_received        = False
+        self.prev_detected       = False
         self.first_guidance_step = True
+        self.fov_yaw_rate        = 0.0  # from IBVS Eq.(13)
+        self.fov_vel_z           = 0.0  # from IBVS ey correction
 
         # ── Subscriptions ───────────────────────────────────────────────────
         self.create_subscription(
@@ -115,7 +116,7 @@ class PNGGuidance(Node):
         )
 
         # ── Publisher ───────────────────────────────────────────────────────
-        self.vel_cmd_pub    = self.create_publisher(Twist,   '/png/velocity_cmd',      25)
+        self.guidance_pub = self.create_publisher(GuidanceCmd, '/png/guidance_cmd', 25)
 
         # Guidance timer
         self.create_timer(1.0 / self.rate, self.guidance_loop)
@@ -176,10 +177,12 @@ class PNGGuidance(Node):
                 self.los_rate_z = (msg.q_z - self.q_z_now) / dt   # [rad/s]
             self.q_y_prev = self.q_y_now
             self.q_z_prev = self.q_z_now
-        self._los_prev_time = now
-        self.q_y_now        = msg.q_y   # elevation
-        self.q_z_now        = msg.q_z   # azimuth
-        self.los_received   = True
+        self._los_prev_time  = now
+        self.q_y_now         = msg.q_y   # elevation
+        self.q_z_now         = msg.q_z   # azimuth
+        self.fov_yaw_rate    = msg.fov_yaw_rate
+        self.fov_vel_z       = msg.fov_vel_z
+        self.los_received    = True
 
     # ── Guidance loop ─────────────────────────────────────────────────────────
 
@@ -244,17 +247,20 @@ class PNGGuidance(Node):
 
         v_cmd = self.v_now * n_vd   # NED velocity command [m/s]
 
-        # Publish as Twist (linear = NED velocity)
-        twist           = Twist()
-        twist.linear.x  = float(v_cmd[0])   # North
-        twist.linear.y  = float(v_cmd[1])   # East
-        twist.linear.z  = float(v_cmd[2])   # Down
-        self.vel_cmd_pub.publish(twist)
+        # Publish GuidanceCmd: PNG velocity + IBVS fov corrections
+        cmd                  = GuidanceCmd()
+        cmd.header.stamp     = self.get_clock().now().to_msg()
+        cmd.target_detected  = self.prev_detected
+        cmd.vel_n            = float(v_cmd[0])
+        cmd.vel_e            = float(v_cmd[1])
+        cmd.vel_d            = float(v_cmd[2]) + self.fov_vel_z  # Z correction integrated here
+        cmd.yaw_rate         = self.fov_yaw_rate
+        self.guidance_pub.publish(cmd)
 
         self.get_logger().info(
             f'PNG: σ_y={math.degrees(sigma_yd):.1f}°, σ_z={math.degrees(sigma_zd):.1f}°, '
-            f'v={self.v_now:.2f} m/s, NED=({v_cmd[0]:.2f},{v_cmd[1]:.2f},{v_cmd[2]:.2f}), '
-            f'speed={speed:.2f} m/s ({"vel" if speed >= self.v_min_sigma else "body"})',
+            f'v={self.v_now:.2f} m/s, NED=({cmd.vel_n:.2f},{cmd.vel_e:.2f},{cmd.vel_d:.2f}), '
+            f'yr={cmd.yaw_rate:.3f} rad/s',
             throttle_duration_sec=1.0,
         )
 

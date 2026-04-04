@@ -6,7 +6,7 @@ FSM: IDLE → TAKEOFF → FORWARD → INTERCEPT → DONE
 INTERCEPT replaces the previous TRACKING+CHARGING states.
   - Uses velocity control (OffboardControlMode.velocity=True)
   - Velocity setpoint from PNG guidance (/png/velocity_cmd)
-  - Yaw rate setpoint from IBVS FOV controller (/ibvs/fov_yaw_rate)
+  - Yaw rate setpoint from PNG guidance_cmd (IBVS fov_yaw_rate aggregated in PNG)
   - Exits to FORWARD on target lost, DONE on collision
 """
 
@@ -21,9 +21,8 @@ from px4_msgs.msg import (
     VehicleStatus,
     Monitoring,
 )
-from geometry_msgs.msg import Twist
-from std_msgs.msg import String, Bool, Float64
-from suicide_drone_msgs.msg import IBVSOutput
+from std_msgs.msg import String, Bool
+from suicide_drone_msgs.msg import GuidanceCmd
 from enum import Enum
 import numpy as np
 
@@ -66,11 +65,8 @@ class BalloonHunterDroneManager(Node):
         self.last_cmd_time    = 0.0
         self.forward_start_pos = None
 
-        # INTERCEPT inputs (from IBVS + PNG)
-        self.target_detected  = False
-        self.vel_cmd          = None    # NED velocity [m/s] from PNG
-        self.fov_yaw_rate     = 0.0    # [rad/s] from IBVS (horizontal, Eq.13)
-        self.fov_vel_z        = 0.0    # [m/s] NED Z correction from IBVS ey
+        # INTERCEPT inputs (from PNG guidance_cmd)
+        self.guidance_cmd     = None    # GuidanceCmd from PNG
         self.collision_done   = False
 
         # Set when INTERCEPT is entered for the first time.
@@ -110,32 +106,11 @@ class BalloonHunterDroneManager(Node):
             qos_profile_sensor_data,
         )
 
-        # IBVS: detection flag + LOS angles (merged)
+        # PNG: complete guidance command (velocity + yaw_rate + detected)
         self.create_subscription(
-            IBVSOutput,
-            '/ibvs/output',
-            self.ibvs_output_callback,
-            10,
-        )
-        # IBVS: FOV yaw rate command (Eq.13, horizontal)
-        self.create_subscription(
-            Float64,
-            '/ibvs/fov_yaw_rate',
-            self.fov_yaw_rate_callback,
-            10,
-        )
-        # IBVS: FOV Z velocity correction (ey-based, vertical)
-        self.create_subscription(
-            Float64,
-            '/ibvs/fov_vel_z',
-            self.fov_vel_z_callback,
-            10,
-        )
-        # PNG: velocity command (Eq.10)
-        self.create_subscription(
-            Twist,
-            '/png/velocity_cmd',
-            self.vel_cmd_callback,
+            GuidanceCmd,
+            '/png/guidance_cmd',
+            self.guidance_cmd_callback,
             10,
         )
         # Collision event from collision_handler
@@ -167,36 +142,25 @@ class BalloonHunterDroneManager(Node):
             throttle_duration_sec=5.0,
         )
 
-    # ── IBVS / PNG / collision callbacks ─────────────────────────────────────
+    # ── PNG / collision callbacks ─────────────────────────────────────────────
 
-    def ibvs_output_callback(self, msg: IBVSOutput):
-        self.target_detected = msg.detected
+    def guidance_cmd_callback(self, msg: GuidanceCmd):
+        """Complete guidance command from PNG (velocity + yaw_rate + detected)."""
+        self.guidance_cmd = msg
 
         # Level-triggered: FORWARD → INTERCEPT whenever target is visible
         # Edge-triggered (not was_detected) is intentionally avoided:
         # the rising edge can occur during TAKEOFF before FORWARD is entered,
         # causing the transition to be permanently missed.
-        if msg.detected and self.state == MissionState.FORWARD:
+        if msg.target_detected and self.state == MissionState.FORWARD:
             self.get_logger().info('Target detected! Switching to INTERCEPT.')
             self.intercept_entered_once = True
             self.state = MissionState.INTERCEPT
 
-        if not msg.detected and self.state == MissionState.INTERCEPT:
+        if not msg.target_detected and self.state == MissionState.INTERCEPT:
             self.get_logger().warn('Target lost! Hovering in place (FORWARD).')
-            self.hover_pos = self.drone_pos.copy()   # freeze current position
+            self.hover_pos = self.drone_pos.copy()
             self.state = MissionState.FORWARD
-
-    def fov_yaw_rate_callback(self, msg: Float64):
-        """FOV yaw rate command from IBVS (Eq.13, horizontal)."""
-        self.fov_yaw_rate = msg.data
-
-    def fov_vel_z_callback(self, msg: Float64):
-        """NED Z velocity correction from IBVS ey (vertical centering)."""
-        self.fov_vel_z = msg.data
-
-    def vel_cmd_callback(self, msg: Twist):
-        """NED velocity command from PNG guidance (Eq.10)."""
-        self.vel_cmd = np.array([msg.linear.x, msg.linear.y, msg.linear.z])
 
     def collision_callback(self, msg: Bool):
         if msg.data and self.state == MissionState.INTERCEPT:
@@ -342,27 +306,24 @@ class BalloonHunterDroneManager(Node):
 
     def handle_intercept(self):
         """
-        Position+Velocity feedforward intercept using PNG guidance + IBVS ey correction.
-        Position setpoint: current drone position (position error=0 → position feedback neutralized)
-        Velocity setpoint: PNG Eq.10 + IBVS fov_vel_z (Z image-center correction)
-        Yaw rate setpoint: IBVS fov_yaw_rate Eq.13 (horizontal image-center correction)
+        Position+Velocity feedforward intercept using PNG GuidanceCmd.
+        Velocity (vel_n/e/d) and yaw_rate already incorporate IBVS corrections in PNG.
         """
-        if self.vel_cmd is None:
-            # No velocity command yet – hover until PNG publishes
+        if self.guidance_cmd is None:
+            # No guidance command yet – hover until PNG publishes
             self._publish_velocity_setpoint([0.0, 0.0, 0.0], pos=self.drone_pos, yawspeed=0.0)
             return
 
-        # PNG velocity + IBVS ey Z-correction
-        vel = self.vel_cmd.copy()
-        vel[2] += self.fov_vel_z
-
+        cmd = self.guidance_cmd
         self._publish_velocity_setpoint(
-            vel, pos=self.drone_pos, yawspeed=self.fov_yaw_rate
+            [cmd.vel_n, cmd.vel_e, cmd.vel_d],
+            pos=self.drone_pos,
+            yawspeed=cmd.yaw_rate,
         )
 
         self.get_logger().info(
-            f'[DEBUG] INTERCEPT: png_v=({self.vel_cmd[0]:.2f},{self.vel_cmd[1]:.2f},'
-            f'{self.vel_cmd[2]:.2f}) fov_vz={self.fov_vel_z:.3f} yr={self.fov_yaw_rate:.3f}',
+            f'[DEBUG] INTERCEPT: v=({cmd.vel_n:.2f},{cmd.vel_e:.2f},{cmd.vel_d:.2f}) '
+            f'yr={cmd.yaw_rate:.3f}',
             throttle_duration_sec=1.0,
         )
 
