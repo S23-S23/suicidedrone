@@ -215,20 +215,6 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    # Mission Logger
-    mission_logger = Node(
-        package='balloon_hunter',
-        executable='mission_logger',
-        name='mission_logger',
-        output='screen',
-        parameters=[{
-            'system_id': drone_id,
-            'balloon_model_name': 'target_balloon',
-            'balloon_link_z_offset': 1.5,
-            'log_rate': 10.0,
-        }]
-    )
-
     # ── ros2 bag recording (mcap) ────────────────────────────────────────────
     # Records all topics.  Output directory: <bag_dir>/balloon_hunt_<timestamp>
     # Storage format: mcap  (install: ros-$ROS_DISTRO-rosbag2-storage-mcap)
@@ -284,7 +270,6 @@ def launch_setup(context, *args, **kwargs):
         collision_handler,     # → /balloon_collision
         drone_visualizer,
         rviz_node,
-        mission_logger,
         balloon_mover,         # moves target balloon on FORWARD state entry
         *bag_actions,          # ros2 bag record (mcap) — empty list when bag_enable=false
     ]

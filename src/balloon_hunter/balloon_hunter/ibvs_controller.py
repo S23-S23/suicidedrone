@@ -134,20 +134,11 @@ class IBVSController(Node):
         # ── Publishers ──────────────────────────────────────────────────────
         self.pub_detected   = self.create_publisher(Bool,    '/ibvs/target_detected',  10)
         self.pub_los        = self.create_publisher(Vector3, '/ibvs/los_angles',        10)
-        self.pub_img_err    = self.create_publisher(Vector3, '/ibvs/image_error',       10)
         self.pub_yaw_rate   = self.create_publisher(Float64, '/ibvs/fov_yaw_rate',      10)
         self.pub_fov_vel_z  = self.create_publisher(Float64, '/ibvs/fov_vel_z',         10)
 
         # Publish IBVS debug image
         self.pub_debug_img  = self.create_publisher(Image,   '/ibvs/debug_image',       10)
-
-        # IBVS diagnostic topics (for analysis)
-        self.pub_body_yaw_rate = self.create_publisher(Float64, '/ibvs/body_yaw_rate',    10)
-        self.pub_ex_dot        = self.create_publisher(Float64, '/ibvs/ex_dot',           10)
-        self.pub_fov_kp_term   = self.create_publisher(Float64, '/ibvs/fov_kp_term',      10)
-        self.pub_fov_kd_term   = self.create_publisher(Float64, '/ibvs/fov_kd_term',      10)
-        self.pub_pixel_center  = self.create_publisher(Vector3, '/ibvs/pixel_center',     10)
-        self.pub_attitude_rpy  = self.create_publisher(Vector3, '/ibvs/attitude_rpy_deg', 10)
 
         # Timeout checker at 10 Hz
         self.create_timer(0.1, self._timeout_check)
@@ -240,40 +231,11 @@ class IBVSController(Node):
         det_msg.data = True
         self.pub_detected.publish(det_msg)
 
-        # ── Publish diagnostic topics ─────────────────────────────────────
-        msg_byr      = Float64(); msg_byr.data = float(self.b_omega_z)
-        self.pub_body_yaw_rate.publish(msg_byr)
-
-        msg_exd      = Float64(); msg_exd.data = float(ex_dot)
-        self.pub_ex_dot.publish(msg_exd)
-
-        msg_kp       = Float64(); msg_kp.data = float(self.fov_kp * ex)
-        self.pub_fov_kp_term.publish(msg_kp)
-
-        msg_kd       = Float64(); msg_kd.data = float(self.fov_kd * ex_dot)
-        self.pub_fov_kd_term.publish(msg_kd)
-
-        msg_px       = Vector3(); msg_px.x = float(u); msg_px.y = float(v)
-        self.pub_pixel_center.publish(msg_px)
-
-        w_, x_, y_, z_ = self._last_q
-        roll_deg  = math.degrees(math.atan2(2*(w_*x_ + y_*z_), 1 - 2*(x_*x_ + y_*y_)))
-        pitch_deg = math.degrees(math.asin(max(-1.0, min(1.0, 2*(w_*y_ - z_*x_)))))
-        yaw_deg   = math.degrees(math.atan2(2*(w_*z_ + x_*y_), 1 - 2*(y_*y_ + z_*z_)))
-        msg_rpy   = Vector3(); msg_rpy.x = roll_deg; msg_rpy.y = pitch_deg; msg_rpy.z = yaw_deg
-        self.pub_attitude_rpy.publish(msg_rpy)
-
         los_msg   = Vector3()
         los_msg.x = q_y   # elevation  (used by PNG guidance Eq.9)
         los_msg.y = q_z   # azimuth
         los_msg.z = 0.0
         self.pub_los.publish(los_msg)
-
-        err_msg   = Vector3()
-        err_msg.x = ex
-        err_msg.y = ey
-        err_msg.z = 0.0
-        self.pub_img_err.publish(err_msg)
 
         yaw_msg      = Float64()
         yaw_msg.data = float(fov_yaw_rate)

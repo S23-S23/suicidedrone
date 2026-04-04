@@ -124,12 +124,6 @@ class PNGGuidance(Node):
         # ── Publisher ───────────────────────────────────────────────────────
         self.vel_cmd_pub    = self.create_publisher(Twist,   '/png/velocity_cmd',      25)
 
-        # PNG diagnostic topics (for analysis)
-        self.pub_sigma_cur  = self.create_publisher(Vector3, '/png/sigma_current_deg', 10)
-        self.pub_sigma_des  = self.create_publisher(Vector3, '/png/sigma_desired_deg', 10)
-        self.pub_los_rate   = self.create_publisher(Vector3, '/png/los_rate_deg',      10)
-        self.pub_speed_info = self.create_publisher(Vector3, '/png/speed_info',        10)
-
         # Guidance timer
         self.create_timer(1.0 / self.rate, self.guidance_loop)
 
@@ -264,32 +258,6 @@ class PNGGuidance(Node):
         twist.linear.y  = float(v_cmd[1])   # East
         twist.linear.z  = float(v_cmd[2])   # Down
         self.vel_cmd_pub.publish(twist)
-
-        # ── Publish diagnostic topics ─────────────────────────────────────
-        # Current velocity direction angles Eq.(8) [deg]
-        msg_sc   = Vector3()
-        msg_sc.x = math.degrees(sigma_y)
-        msg_sc.y = math.degrees(sigma_z)
-        self.pub_sigma_cur.publish(msg_sc)
-
-        # Desired velocity direction angles Eq.(9) [deg]
-        msg_sd   = Vector3()
-        msg_sd.x = math.degrees(sigma_yd)
-        msg_sd.y = math.degrees(sigma_zd)
-        self.pub_sigma_des.publish(msg_sd)
-
-        # LOS rate [deg/s]
-        msg_lr   = Vector3()
-        msg_lr.x = math.degrees(self.los_rate_y)
-        msg_lr.y = math.degrees(self.los_rate_z)
-        self.pub_los_rate.publish(msg_lr)
-
-        # Speed info: v_now[m/s], actual_speed[m/s], sigma_source(0=vel, 1=body)
-        msg_si   = Vector3()
-        msg_si.x = float(self.v_now)
-        msg_si.y = float(speed)
-        msg_si.z = 0.0 if (speed >= self.v_min_sigma) else 1.0
-        self.pub_speed_info.publish(msg_si)
 
         self.get_logger().info(
             f'PNG: σ_y={math.degrees(sigma_yd):.1f}°, σ_z={math.degrees(sigma_zd):.1f}°, '
