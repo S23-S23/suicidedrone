@@ -91,7 +91,6 @@ class DroneVisualizer(Node):
         self.frame_id     = 'map'
         self.drone_frame           = f'drone{system_id}'
         self.drone_model_name      = f'drone{system_id}'
-        local_pos_topic            = f'drone{system_id}/fmu/out/vehicle_local_position'
 
         # TF broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -125,12 +124,7 @@ class DroneVisualizer(Node):
         self._latest_target = None   # TargetInfo
 
         # Subscriptions
-        self.create_subscription(
-            VehicleLocalPosition,
-            local_pos_topic,
-            self.local_position_callback,
-            qos_profile_sensor_data,
-        )
+
         self.create_subscription(
             ModelStates,
             '/gazebo/model_states',
@@ -303,28 +297,6 @@ class DroneVisualizer(Node):
         except Exception:
             pass
 
-    # ----------------------------------------------------------------------- #
-    #  PX4 VehicleLocalPosition – estimated trajectory (yellow)                #
-    # ----------------------------------------------------------------------- #
-    def local_position_callback(self, msg: VehicleLocalPosition):
-        """Accumulate PX4 EKF2 estimated position and publish yellow trajectory."""
-        # VehicleLocalPosition x/y/z is NED [m]
-        x_enu, y_enu, z_enu = ned_to_enu(float(msg.x), float(msg.y), float(msg.z))
-
-        pt = Point()
-        pt.x, pt.y, pt.z = x_enu, y_enu, z_enu
-        self.px4_points.append(pt)
-        if len(self.px4_points) > self.max_path_points:
-            self.px4_points.pop(0)
-
-        self._publish_line_strip(
-            self.px4_traj_pub,
-            self.px4_points,
-            ns='px4_trajectory',
-            marker_id=1,
-            color=_COLOR_PX4,
-            line_width=0.08,
-        )
 
     # ----------------------------------------------------------------------- #
     #  Gazebo model_states – GT pose storage + trajectory (green) + balloon   #

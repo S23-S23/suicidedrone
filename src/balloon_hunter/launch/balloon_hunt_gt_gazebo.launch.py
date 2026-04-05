@@ -60,7 +60,7 @@ def launch_setup(context, *args, **kwargs):
         launch_arguments={
             'world': world_file_path,
             'verbose': 'false',
-            'gui': 'true'
+            'gui': 'false'
         }.items()
     )
 
@@ -233,14 +233,14 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'balloon_model_name': 'target_balloon',
             'movement_pattern': LaunchConfiguration('move'),
-            'speed': 2.0,
+            'speed': 1.5,
             'update_rate': 50.0,
             'initial_x': 3.0,
             'initial_y': 15.0,
             'initial_z': 2.0,
             'random_interval': 3.0,
             'system_id': drone_id,
-            'collision_distance': 0.5,
+            'collision_distance': 0.7,
             'balloon_link_z_offset': 1.5,
         }]
     )

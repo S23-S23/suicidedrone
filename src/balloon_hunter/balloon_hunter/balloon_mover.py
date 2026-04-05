@@ -10,9 +10,8 @@ The balloon model must be non-static + kinematic (model.sdf):
   <link ...>
     <kinematic>true</kinematic>
 
-With kinematic=true, Gazebo ODE integrates the balloon position at physics
-rate (1000 Hz) using the velocity set via set_entity_state. The service is
-only called on events (start / direction-change / stop), not every frame.
+Collision detection uses ground-truth ENU positions from /gazebo/model_states
+for both the balloon and the drone — no NED conversion or position estimation.
 
 Movement patterns (movement_pattern parameter):
   left   – West  (Gazebo -X)  : balloon drifts left in the drone's camera view
@@ -26,16 +25,13 @@ Movement patterns (movement_pattern parameter):
 import math
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String, Bool
 from gazebo_msgs.srv import SetEntityState
-from gazebo_msgs.msg import EntityState
+from gazebo_msgs.msg import EntityState, ModelStates
 from geometry_msgs.msg import Pose, Twist
-from px4_msgs.msg import Monitoring
 import numpy as np
 
 
-# ── Supported movement pattern names ──────────────────────────────────────────
 class Pattern:
     LEFT   = 'left'
     RIGHT  = 'right'
@@ -53,14 +49,15 @@ class BalloonMover(Node):
         self.declare_parameter('balloon_model_name', 'target_balloon')
         self.declare_parameter('movement_pattern', 'left')
         self.declare_parameter('speed', 0.1)
-        # Timer rate for collision check + random direction tracking [Hz]
         self.declare_parameter('update_rate', 20.0)
         self.declare_parameter('initial_x', 3.0)
         self.declare_parameter('initial_y', 15.0)
         self.declare_parameter('initial_z', 2.0)
         self.declare_parameter('random_interval', 3.0)
-        self.declare_parameter('collision_distance', 0.6)
+        self.declare_parameter('collision_distance', 1.6)
         self.declare_parameter('system_id', 1)
+        # balloon_link <pose>0 0 1.5 0 0 0</pose> in model.sdf:
+        # model_states returns the model root pose; add this for the sphere center.
         self.declare_parameter('balloon_link_z_offset', 1.5)
 
         self.balloon_name       = self.get_parameter('balloon_model_name').value
@@ -69,17 +66,21 @@ class BalloonMover(Node):
         self.update_rate        = self.get_parameter('update_rate').value
         self.random_interval    = self.get_parameter('random_interval').value
         self.collision_distance = self.get_parameter('collision_distance').value
-        system_id               = self.get_parameter('system_id').value
+        self.system_id          = self.get_parameter('system_id').value
         self.balloon_z_offset   = self.get_parameter('balloon_link_z_offset').value
 
-        # Tracked position in Gazebo ENU [m] (integrated locally for collision)
+        # Balloon model-origin pose (ENU) — updated from /gazebo/model_states.
+        # Falls back to initial_x/y/z until first model_states message arrives.
         self.pos_x = self.get_parameter('initial_x').value
         self.pos_y = self.get_parameter('initial_y').value
         self.pos_z = self.get_parameter('initial_z').value
 
-        self.moving         = False   # starts moving on FORWARD entry
-        self.collision_done = False   # latch: collision published once
-        self.drone_pos_ned  = None    # NED [m] from Monitoring
+        # GT positions in Gazebo ENU [m] — set by _model_states_cb
+        self.balloon_enu: np.ndarray | None = None   # balloon sphere center
+        self.drone_enu:   np.ndarray | None = None   # drone model origin
+
+        self.moving         = False
+        self.collision_done = False
 
         # Current velocity applied to Gazebo [m/s]
         self._vel = (0.0, 0.0, 0.0)
@@ -101,25 +102,44 @@ class BalloonMover(Node):
         self.create_subscription(
             String, '/mission_state', self._mission_state_cb, 10
         )
+        # Ground-truth positions for both balloon and drone
         self.create_subscription(
-            Monitoring,
-            f'drone{system_id}/fmu/out/monitoring',
-            self._monitoring_cb,
-            qos_profile_sensor_data,
+            ModelStates, '/gazebo/model_states', self._model_states_cb, 10
         )
 
-        # ── Timer (collision check + random direction tracking) ─────────────
+        # ── Timer ───────────────────────────────────────────────────────────
         self.create_timer(1.0 / self.update_rate, self._update)
 
         self.get_logger().info(
             f'BalloonMover started: pattern={self.pattern}, '
-            f'speed={self.speed} m/s'
+            f'speed={self.speed} m/s, collision_distance={self.collision_distance} m'
         )
 
-    # ── Drone position callback ────────────────────────────────────────────
+    # ── Ground-truth callback ──────────────────────────────────────────────
 
-    def _monitoring_cb(self, msg: Monitoring):
-        self.drone_pos_ned = np.array([msg.pos_x, msg.pos_y, msg.pos_z])
+    def _model_states_cb(self, msg: ModelStates):
+        """Extract balloon sphere center and drone origin from Gazebo ENU."""
+        drone_name = f'drone{self.system_id}'
+
+        if self.balloon_name in msg.name:
+            idx = msg.name.index(self.balloon_name)
+            p = msg.pose[idx].position
+            # model root pose + link z-offset = sphere center
+            self.balloon_enu = np.array([
+                float(p.x),
+                float(p.y),
+                float(p.z) + self.balloon_z_offset,
+            ])
+            # Keep pos_x/y/z in sync with actual Gazebo model-origin position
+            # so _apply_velocity anchors to the true position.
+            self.pos_x = float(p.x)
+            self.pos_y = float(p.y)
+            self.pos_z = float(p.z)
+
+        if drone_name in msg.name:
+            idx = msg.name.index(drone_name)
+            p = msg.pose[idx].position
+            self.drone_enu = np.array([float(p.x), float(p.y), float(p.z)])
 
     # ── Mission state callback ─────────────────────────────────────────────
 
@@ -134,7 +154,6 @@ class BalloonMover(Node):
     # ── Motion start ───────────────────────────────────────────────────────
 
     def _start_motion(self):
-        """Compute initial velocity and send once to Gazebo."""
         if self.pattern == Pattern.RANDOM:
             self._pick_random_direction()
         vx, vy, vz = self._compute_velocity()
@@ -168,18 +187,18 @@ class BalloonMover(Node):
             return (self._random_dx * v, self._random_dy * v, 0.0)
         return (0.0, 0.0, 0.0)
 
-    # ── Send velocity to Gazebo (event-driven, not every frame) ───────────
+    # ── Send state to Gazebo ───────────────────────────────────────────────
 
     def _apply_velocity(self, vx, vy, vz):
         """
-        Call set_entity_state with the desired velocity.
-        Gazebo kinematic physics will integrate this at 1000 Hz until next call.
-        Also anchors the position to our locally-tracked value to prevent drift.
+        Call set_entity_state to set balloon velocity (and anchor position).
+        Kinematic body: Gazebo integrates at physics rate until next call.
+        pos_x/y/z is kept up-to-date from model_states, so the anchor is accurate.
         """
         self._vel = (vx, vy, vz)
 
         if not self.set_state_cli.service_is_ready():
-            self.get_logger().warn('set_entity_state not ready — skipping')
+            self.get_logger().warn('set_entity_state not ready — retrying next tick')
             return
 
         req = SetEntityState.Request()
@@ -199,20 +218,26 @@ class BalloonMover(Node):
 
         self.set_state_cli.call_async(req)
 
-    # ── Collision check ────────────────────────────────────────────────────
+    # ── Collision check (GT ENU) ───────────────────────────────────────────
 
     def _check_collision(self):
-        if self.collision_done or self.drone_pos_ned is None:
+        """
+        Compare balloon sphere center and drone origin, both in Gazebo ENU.
+        No NED conversion — direct 3-D Euclidean distance in world frame.
+        """
+        if self.collision_done:
+            return
+        if self.balloon_enu is None or self.drone_enu is None:
             return
 
-        # Balloon ENU → NED: (x=East,y=North,z=Up) → (x=North,y=East,z=Down)
-        balloon_ned = np.array([
-             self.pos_y,
-             self.pos_x,
-            -(self.pos_z + self.balloon_z_offset),
-        ])
+        distance = np.linalg.norm(self.drone_enu - self.balloon_enu)
 
-        distance = np.linalg.norm(self.drone_pos_ned - balloon_ned)
+        self.get_logger().info(
+            f'[collision] dist={distance:.2f}m '
+            f'drone=({self.drone_enu[0]:.1f},{self.drone_enu[1]:.1f},{self.drone_enu[2]:.1f}) '
+            f'balloon=({self.balloon_enu[0]:.1f},{self.balloon_enu[1]:.1f},{self.balloon_enu[2]:.1f})',
+            throttle_duration_sec=1.0,
+        )
 
         if distance < self.collision_distance:
             self.get_logger().info(
@@ -220,7 +245,7 @@ class BalloonMover(Node):
             )
             self.moving         = False
             self.collision_done = True
-            self._apply_velocity(0.0, 0.0, 0.0)   # stop Gazebo kinematic body
+            self._apply_velocity(0.0, 0.0, 0.0)
             msg      = Bool()
             msg.data = True
             self.collision_pub.publish(msg)
@@ -228,28 +253,21 @@ class BalloonMover(Node):
     # ── Timer callback ─────────────────────────────────────────────────────
 
     def _update(self):
-        # Integrate local position for collision detection
-        vx, vy, vz = self._vel
-        dt = 1.0 / self.update_rate
-        self.pos_x += vx * dt
-        self.pos_y += vy * dt
-        self.pos_z += vz * dt
-
         self._check_collision()
 
         if not self.moving:
             return
 
-        # Random: check if direction should change; send new velocity if so
+        # Random pattern: check direction change
         if self.pattern == Pattern.RANDOM:
-            self._random_timer -= dt
+            self._random_timer -= 1.0 / self.update_rate
             if self._random_timer <= 0.0:
                 self._pick_random_direction()
-                nvx, nvy, nvz = self._compute_velocity()
-                self._apply_velocity(nvx, nvy, nvz)
+                vx, vy, vz = self._compute_velocity()
+                self._apply_velocity(vx, vy, vz)
 
         self.get_logger().info(
-            f'Balloon pos=({self.pos_x:.2f},{self.pos_y:.2f},{self.pos_z:.2f})',
+            f'Balloon ENU=({self.pos_x:.2f},{self.pos_y:.2f},{self.pos_z:.2f})',
             throttle_duration_sec=2.0,
         )
 
