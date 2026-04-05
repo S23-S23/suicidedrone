@@ -60,7 +60,7 @@ def launch_setup(context, *args, **kwargs):
         launch_arguments={
             'world': world_file_path,
             'verbose': 'false',
-            'gui': 'false'
+            'gui': 'true'
         }.items()
     )
 
@@ -174,24 +174,11 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'system_id': drone_id,
             'takeoff_height': 5.5,
-            'forward_speed': 2.0,
+            'forward_speed': 4.0,
             'forward_distance_limit': 50.0,
         }]
     )
 
-    # Collision Handler (uses Gazebo model_states + Monitoring, no position_estimator)
-    collision_handler = Node(
-        package='balloon_hunter',
-        executable='collision_handler',
-        name='collision_handler',
-        output='screen',
-        parameters=[{
-            'collision_distance': 0.5,
-            'drone_id': drone_id,
-            'balloon_model_name': 'target_balloon',
-            'balloon_link_z_offset': 1.5,
-        }]
-    )
 
     # Drone Visualizer (TF/Path for RViz2)
     drone_visualizer = Node(
@@ -246,12 +233,15 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'balloon_model_name': 'target_balloon',
             'movement_pattern': LaunchConfiguration('move'),
-            'speed': 1.0,
-            'update_rate': 20.0,
+            'speed': 2.0,
+            'update_rate': 50.0,
             'initial_x': 3.0,
             'initial_y': 15.0,
             'initial_z': 2.0,
             'random_interval': 3.0,
+            'system_id': drone_id,
+            'collision_distance': 0.5,
+            'balloon_link_z_offset': 1.5,
         }]
     )
 
@@ -267,7 +257,6 @@ def launch_setup(context, *args, **kwargs):
         ibvs_controller,       # → /ibvs/target_detected, /ibvs/los_angles, /ibvs/fov_yaw_rate
         png_guidance,          # → /png/velocity_cmd
         drone_manager,         # consumes ibvs + png outputs
-        collision_handler,     # → /balloon_collision
         drone_visualizer,
         rviz_node,
         balloon_mover,         # moves target balloon on FORWARD state entry

@@ -1,9 +1,10 @@
 <?xml version="1.0"?>
 <sdf version="1.6">
   <model name="red_balloon">
-    <static>true</static>
+    <static>false</static>
     <link name="balloon_link">
       <pose>0 0 1.5 0 0 0</pose>
+      <kinematic>true</kinematic>
       <inertial>
         <mass>0.01</mass>
         <inertia>

@@ -37,7 +37,6 @@ setup(
             'balloon_detector = balloon_hunter.balloon_detector:main',
             'position_estimator = balloon_hunter.position_estimator:main',
             'drone_manager = balloon_hunter.drone_manager:main',
-            'collision_handler = balloon_hunter.collision_handler:main',
             'drone_visualizer = balloon_hunter.drone_visualizer:main',
             'gt_balloon_detector = balloon_hunter.gt_balloon_detector:main',
             'ibvs_controller = balloon_hunter.ibvs_controller:main',

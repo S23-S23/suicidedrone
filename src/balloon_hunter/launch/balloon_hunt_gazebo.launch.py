@@ -168,17 +168,6 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # Collision Handler Node
-    collision_handler = Node(
-        package='balloon_hunter',
-        executable='collision_handler',
-        name='collision_handler',
-        output='screen',
-        parameters=[{
-            'collision_distance': 0.5,
-            'drone_id': drone_id
-        }]
-    )
 
     # Drone Visualizer Node (NED -> ENU, TF, Path for RViz2)
     drone_visualizer = Node(
@@ -217,7 +206,6 @@ def launch_setup(context, *args, **kwargs):
         balloon_detector,
         position_estimator,
         drone_manager,
-        collision_handler,
         drone_visualizer,
         rviz_node,
     ]

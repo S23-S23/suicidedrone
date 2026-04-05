@@ -21,7 +21,7 @@ from cv_bridge import CvBridge
 from px4_msgs.msg import VehicleLocalPosition
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Quaternion
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
 from tf2_ros import TransformBroadcaster
@@ -116,7 +116,8 @@ class DroneVisualizer(Node):
         self.drone_gt_valid = False
 
         # Current mission state name
-        self.mission_state = 'IDLE'
+        self.mission_state  = 'IDLE'
+        self.balloon_hit    = False   # turns balloon marker blue on collision
 
         # Debug image state
         self._latest_img    = None   # raw camera image
@@ -134,6 +135,12 @@ class DroneVisualizer(Node):
             ModelStates,
             '/gazebo/model_states',
             self.model_states_callback,
+            10,
+        )
+        self.create_subscription(
+            Bool,
+            '/balloon_collision',
+            self._collision_callback,
             10,
         )
         self.create_subscription(
@@ -379,9 +386,9 @@ class DroneVisualizer(Node):
         balloon.pose.orientation.w  = 1.0
         d = self.balloon_radius * 2.0
         balloon.scale.x = balloon.scale.y = balloon.scale.z = d
-        balloon.color.r = 1.0
+        balloon.color.r = 0.0 if self.balloon_hit else 1.0
         balloon.color.g = 0.0
-        balloon.color.b = 0.0
+        balloon.color.b = 1.0 if self.balloon_hit else 0.0
         balloon.color.a = 0.8
         balloon.lifetime.sec = balloon.lifetime.nanosec = 0
         self.balloon_pub.publish(balloon)
@@ -389,6 +396,11 @@ class DroneVisualizer(Node):
     # ----------------------------------------------------------------------- #
     #  Mission state label                                                      #
     # ----------------------------------------------------------------------- #
+    def _collision_callback(self, msg: Bool):
+        if msg.data:
+            self.balloon_hit = True
+            self.get_logger().info('Balloon hit — marker changed to blue')
+
     def mission_state_callback(self, msg: String):
         self.mission_state = msg.data
         self._publish_state_marker()
