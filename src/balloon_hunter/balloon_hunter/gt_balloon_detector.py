@@ -41,12 +41,10 @@ Input  (identical to balloon_detector):
 
 Output (identical to balloon_detector):
   /target_info                  - suicide_drone_msgs/TargetInfo (bounding box)
-  /inference_result_{id}        - sensor_msgs/Image (annotated visualization)
 """
 
 import math
 import numpy as np
-import cv2
 
 import rclpy
 from rclpy.node import Node
@@ -55,15 +53,6 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from gazebo_msgs.msg import ModelStates, LinkStates
 from suicide_drone_msgs.msg import TargetInfo
-from cv_bridge import CvBridge
-
-bridge = CvBridge()
-
-# Visualization colors (BGR)
-COLOR_DETECTED   = (0, 255,   0)   # green  – balloon in FOV and detected
-COLOR_OUT_OF_FOV = (0, 165, 255)   # orange – balloon projected outside image
-COLOR_BEHIND     = (0,   0, 255)   # red    – balloon behind camera
-COLOR_WAITING    = (180, 180, 180) # grey   – waiting for Gazebo data
 
 
 # --------------------------------------------------------------------------- #
@@ -144,9 +133,8 @@ class GtBalloonDetector(Node):
         self.create_subscription(ModelStates, '/gazebo/model_states', self.model_states_callback, 10)
         self.create_subscription(LinkStates,  '/gazebo/link_states',  self.link_states_callback,  10)
 
-        # --- Publishers (identical topics/types to balloon_detector) --------
+        # --- Publisher ----------------------------------------------------------
         self.target_pub = self.create_publisher(TargetInfo, '/target_info', 10)
-        self.img_pub    = self.create_publisher(Image,           f'/inference_result_{sid}',  10)
 
         self.get_logger().info(
             f'GtBalloonDetector started | camera={camera_topic} '
@@ -205,65 +193,39 @@ class GtBalloonDetector(Node):
     #  Main callback                                                            #
     # ----------------------------------------------------------------------- #
     def camera_callback(self, msg: Image):
-        """Project balloon GT position onto the image and publish TargetInfo."""
-        try:
-            cv_img = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        except Exception as e:
-            self.get_logger().error(f'cv_bridge error: {e}')
-            return
-
+        """Project balloon GT position onto the image plane and publish TargetInfo."""
         # Wait until all Gazebo data has been received at least once
-        missing = []
-        if self.balloon_enu   is None: missing.append(f'model:{self.balloon_model}')
-        if self.camera_enu    is None: missing.append(f'link:{self.camera_link_name}')
-        if self.R_enu_to_cam  is None: missing.append('camera orientation')
-        if missing:
-            self._put_status(cv_img, f'Waiting for Gazebo: {missing}', COLOR_WAITING)
-            self._publish_image(cv_img, msg)
-            self.get_logger().warn(f'[GT] Waiting: {missing}', throttle_duration_sec=3.0)
+        if self.balloon_enu is None or self.camera_enu is None or self.R_enu_to_cam is None:
+            self.get_logger().warn('[GT] Waiting for Gazebo data', throttle_duration_sec=3.0)
             return
 
         # Step 1: Relative vector in Gazebo ENU (balloon w.r.t. camera center)
         rel_enu = self.balloon_enu - self.camera_enu
 
-        # Step 2: Rotate ENU vector into Gazebo SDF link frame (FLU convention).
-        #   R_enu_to_cam is built from the camera link quaternion in link_states,
-        #   which already encodes drone pitch/roll/yaw and gimbal state.
+        # Step 2: Rotate ENU -> Gazebo SDF FLU link frame -> OpenCV camera frame
         r_flu = self.R_enu_to_cam @ rel_enu
-
-        # Step 2b: Align from Gazebo FLU link frame to OpenCV camera frame.
-        #   Gazebo SDF cgo3_camera_link: X=forward, Y=left, Z=up
-        #   OpenCV camera frame:         X=right,   Y=down, Z=forward
         R_FLU_to_opencv = np.array([[0, -1,  0],
                                     [0,  0, -1],
                                     [1,  0,  0]], dtype=float)
         r_cam = R_FLU_to_opencv @ r_flu
-        z_cam = r_cam[2]   # depth along camera optical axis (OpenCV Z = forward)
+        z_cam = r_cam[2]
 
-        # Balloon is behind the camera
         if z_cam <= 0.01:
-            status = f'Balloon BEHIND camera | z_cam={z_cam:.2f}m'
-            self._put_status(cv_img, status, COLOR_BEHIND)
-            self._publish_image(cv_img, msg)
-            self.get_logger().info(f'[GT] {status}', throttle_duration_sec=2.0)
+            self.get_logger().info('[GT] Balloon behind camera', throttle_duration_sec=2.0)
             return
 
-        # Step 3: Pinhole projection -> pixel (u, v)
+        # Step 3: Pinhole projection
         u = self.fx * (r_cam[0] / z_cam) + self.cx
         v = self.fy * (r_cam[1] / z_cam) + self.cy
 
-        # Step 4: Pixel radius proportional to balloon sphere radius
+        # Step 4: Pixel bounding box from projected sphere radius
         pix_r  = max(int(self.fx * self.balloon_r / z_cam), 4)
-        left   = int(u - pix_r)
-        top    = int(v - pix_r)
-        right  = int(u + pix_r)
-        bottom = int(v + pix_r)
-        iu, iv = int(u), int(v)
+        left   = int(u - pix_r);  top    = int(v - pix_r)
+        right  = int(u + pix_r);  bottom = int(v + pix_r)
 
         in_fov = (right > 0 and left < self.width and
                   bottom > 0 and top < self.height)
 
-        # --- Publish TargetInfo when balloon is within the FOV ---------------
         if in_fov:
             target_msg            = TargetInfo()
             target_msg.header     = msg.header
@@ -274,63 +236,15 @@ class GtBalloonDetector(Node):
             target_msg.bottom     = min(bottom, self.height - 1)
             self.target_pub.publish(target_msg)
             self.get_logger().info(
-                f'[GT] DETECTED | bbox=({target_msg.left},{target_msg.top},{target_msg.right},{target_msg.bottom}) '
-                f'center=({iu},{iv}) z={z_cam:.2f}m',
+                f'[GT] DETECTED | bbox=({target_msg.left},{target_msg.top},'
+                f'{target_msg.right},{target_msg.bottom}) z={z_cam:.2f}m',
                 throttle_duration_sec=1.0,
             )
-
-        # --- Visualization --------------------------------------------------
-        if in_fov:
-            cv2.rectangle(cv_img, (left, top), (right, bottom), COLOR_DETECTED, 3)
-            cv2.drawMarker(cv_img, (iu, iv), COLOR_DETECTED,
-                           markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2)
-            label = f'balloon GT  z={z_cam:.1f}m'
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            lx = max(left, 0)
-            ly = max(top - 8, th + 4)
-            cv2.rectangle(cv_img, (lx, ly - th - 4), (lx + tw + 4, ly + 2), (0, 0, 0), -1)
-            cv2.putText(cv_img, label, (lx + 2, ly),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, COLOR_DETECTED, 2)
         else:
-            # Arrow pointing toward the balloon's projected direction
-            cx_img, cy_img = self.width // 2, self.height // 2
-            dx, dy = iu - cx_img, iv - cy_img
-            norm   = math.hypot(dx, dy) or 1.0
-            margin = 40
-            ex = int(cx_img + dx / norm * (min(cx_img, cy_img) - margin))
-            ey = int(cy_img + dy / norm * (min(cx_img, cy_img) - margin))
-            cv2.arrowedLine(cv_img, (cx_img, cy_img), (ex, ey),
-                            COLOR_OUT_OF_FOV, 2, tipLength=0.2)
-            status = f'Balloon out of FOV | proj=({iu},{iv}) z={z_cam:.1f}m'
-            self._put_status(cv_img, status, COLOR_OUT_OF_FOV)
-            self.get_logger().info(f'[GT] {status}', throttle_duration_sec=2.0)
-
-        # Debug overlay (bottom-left)
-        debug_lines = [
-            f'camera ENU:  ({self.camera_enu[0]:.1f}, {self.camera_enu[1]:.1f}, {self.camera_enu[2]:.1f})',
-            f'balloon ENU: ({self.balloon_enu[0]:.1f}, {self.balloon_enu[1]:.1f}, {self.balloon_enu[2]:.1f})',
-            f'r_cam: ({r_cam[0]:.2f}, {r_cam[1]:.2f}, {r_cam[2]:.2f})',
-            f'in_fov={in_fov}  z={z_cam:.2f}m',
-        ]
-        for i, line in enumerate(debug_lines):
-            cv2.putText(cv_img, line, (6, self.height - 10 - i * 18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-
-        self._publish_image(cv_img, msg)
-
-    # ----------------------------------------------------------------------- #
-    #  Helpers                                                                  #
-    # ----------------------------------------------------------------------- #
-    def _put_status(self, img: np.ndarray, text: str, color):
-        cv2.putText(img, text, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-    def _publish_image(self, cv_img: np.ndarray, original_msg: Image):
-        try:
-            out        = bridge.cv2_to_imgmsg(cv_img, encoding='bgr8')
-            out.header = original_msg.header
-            self.img_pub.publish(out)
-        except Exception as e:
-            self.get_logger().error(f'Image publish error: {e}')
+            self.get_logger().info(
+                f'[GT] Out of FOV | proj=({int(u)},{int(v)}) z={z_cam:.1f}m',
+                throttle_duration_sec=2.0,
+            )
 
 
 def main(args=None):

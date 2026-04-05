@@ -2,25 +2,30 @@
 """
 Drone Visualizer Node
 Publishes to RViz2:
-  - TF:                         map -> drone{id}          (from /gazebo/model_states GT, 50 Hz timer)
-  - geometry_msgs/PoseStamped:  current drone pose        (from /gazebo/model_states GT, 50 Hz timer)
+  - TF:                         map -> drone{id}          (from /gazebo/model_states GT, 20 Hz timer)
+  - geometry_msgs/PoseStamped:  current drone pose        (from /gazebo/model_states GT, 20 Hz timer)
   - Marker LINE_STRIP (green):  Gazebo GT trajectory      (from /gazebo/model_states)
   - Marker LINE_STRIP (yellow): PX4 estimated trajectory  (from VehicleLocalPosition)
   - Marker SPHERE:              balloon target             (from /gazebo/model_states)
   - Marker TEXT_VIEW_FACING:    mission state label        (from /mission_state)
+  - sensor_msgs/Image:          IBVS debug overlay image  (from /inference_result + /ibvs/output + /target_info)
 """
 
 import math
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+import cv2
+from cv_bridge import CvBridge
 
 from px4_msgs.msg import VehicleLocalPosition
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Quaternion
 from std_msgs.msg import String
+from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
 from tf2_ros import TransformBroadcaster
+from suicide_drone_msgs.msg import IBVSOutput, TargetInfo
 
 # Mission state text color (R, G, B)  – matches MissionState enum in drone_manager
 _STATE_COLOR = {
@@ -66,19 +71,31 @@ class DroneVisualizer(Node):
         self.declare_parameter('balloon_radius', 0.3)
         self.declare_parameter('balloon_model_name', 'target_balloon')
         self.declare_parameter('balloon_link_z_offset', 1.5)
+        # Camera intrinsics for debug image overlay
+        self.declare_parameter('fx', 205.5)
+        self.declare_parameter('fy', 205.5)
+        self.declare_parameter('cx', 320.0)
+        self.declare_parameter('cy', 180.0)
+        self.declare_parameter('camera_topic', '/drone1/camera/image_raw')
 
         system_id                  = self.get_parameter('system_id').value
         self.max_path_points       = self.get_parameter('max_path_points').value
         self.balloon_radius        = self.get_parameter('balloon_radius').value
         self.balloon_model_name    = self.get_parameter('balloon_model_name').value
         self.balloon_link_z_offset = self.get_parameter('balloon_link_z_offset').value
-        self.frame_id              = 'map'
+        self.fx           = self.get_parameter('fx').value
+        self.fy           = self.get_parameter('fy').value
+        self.cx           = self.get_parameter('cx').value
+        self.cy           = self.get_parameter('cy').value
+        camera_topic      = self.get_parameter('camera_topic').value
+        self.frame_id     = 'map'
         self.drone_frame           = f'drone{system_id}'
         self.drone_model_name      = f'drone{system_id}'
         local_pos_topic            = f'drone{system_id}/fmu/out/vehicle_local_position'
 
         # TF broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
+        self._bridge = CvBridge()
 
         # Publishers
         self.pose_pub       = self.create_publisher(PoseStamped, '/drone/pose',          10)
@@ -86,6 +103,7 @@ class DroneVisualizer(Node):
         self.px4_traj_pub   = self.create_publisher(Marker,      '/drone/px4_trajectory',10)
         self.balloon_pub    = self.create_publisher(Marker,      '/balloon/marker',      10)
         self.state_text_pub = self.create_publisher(Marker,      '/drone/state_text',    10)
+        self.debug_img_pub  = self.create_publisher(Image,       '/ibvs/debug_image',    10)
 
         # Accumulated trajectory point lists (ENU)
         self.gt_points:  list[Point] = []   # Gazebo ground truth
@@ -99,6 +117,11 @@ class DroneVisualizer(Node):
 
         # Current mission state name
         self.mission_state = 'IDLE'
+
+        # Debug image state
+        self._latest_img    = None   # raw camera image
+        self._latest_ibvs   = None   # IBVSOutput
+        self._latest_target = None   # TargetInfo
 
         # Subscriptions
         self.create_subscription(
@@ -119,9 +142,27 @@ class DroneVisualizer(Node):
             self.mission_state_callback,
             10,
         )
+        self.create_subscription(
+            Image,
+            camera_topic,
+            self._img_callback,
+            10,
+        )
+        self.create_subscription(
+            IBVSOutput,
+            '/ibvs/output',
+            self._ibvs_callback,
+            10,
+        )
+        self.create_subscription(
+            TargetInfo,
+            '/target_info',
+            self._target_callback,
+            10,
+        )
 
-        # 50 Hz timer: republish TF + PoseStamped from latest GT pose
-        self.create_timer(1.0 / 50.0, self.pose_timer_callback)
+        # 20 Hz timer: TF + PoseStamped + debug image
+        self.create_timer(1.0 / 20.0, self.viz_timer_callback)
 
         self.get_logger().info(
             f'DroneVisualizer started | GT=green(/drone/gt_trajectory) '
@@ -129,9 +170,25 @@ class DroneVisualizer(Node):
         )
 
     # ----------------------------------------------------------------------- #
-    #  50 Hz timer – TF + PoseStamped from latest Gazebo GT pose              #
+    #  Debug image callbacks                                                    #
     # ----------------------------------------------------------------------- #
-    def pose_timer_callback(self):
+    def _img_callback(self, msg: Image):
+        self._latest_img = msg
+
+    def _ibvs_callback(self, msg: IBVSOutput):
+        self._latest_ibvs = msg
+
+    def _target_callback(self, msg: TargetInfo):
+        self._latest_target = msg
+
+    # ----------------------------------------------------------------------- #
+    #  20 Hz timer – TF + PoseStamped + debug image                           #
+    # ----------------------------------------------------------------------- #
+    def viz_timer_callback(self):
+        self._publish_pose()
+        self._publish_debug_image()
+
+    def _publish_pose(self):
         if not self.drone_gt_valid:
             return
 
@@ -159,6 +216,85 @@ class DroneVisualizer(Node):
         pose.pose.position.z    = float(z_enu)
         pose.pose.orientation   = quat
         self.pose_pub.publish(pose)
+
+    # ----------------------------------------------------------------------- #
+    #  IBVS debug image overlay                                                #
+    # ----------------------------------------------------------------------- #
+    def _publish_debug_image(self):
+        if self._latest_img is None:
+            return
+
+        try:
+            cv_img = self._bridge.imgmsg_to_cv2(self._latest_img, 'bgr8')
+        except Exception:
+            return
+
+        h, w   = cv_img.shape[:2]
+        cx_img = int(self.cx)
+        cy_img = int(self.cy)
+
+        # ── Principal-point crosshair ───────────────────────────────────────
+        cv2.line(cv_img, (cx_img - 20, cy_img), (cx_img + 20, cy_img), (0, 255, 255), 2)
+        cv2.line(cv_img, (cx_img, cy_img - 20), (cx_img, cy_img + 20), (0, 255, 255), 2)
+        cv2.circle(cv_img, (cx_img, cy_img), 4, (0, 255, 255), 1)
+
+        # ── Bounding box + balloon center (from TargetInfo) ─────────────────
+        if self._latest_target is not None:
+            det   = self._latest_target
+            bb_l  = int(det.left);  bb_t = int(det.top)
+            bb_r  = int(det.right); bb_b = int(det.bottom)
+            u_int = int((det.left + det.right) * 0.5)
+            v_int = int((det.top  + det.bottom) * 0.5)
+            ex    = (u_int - self.cx) / self.fx
+            ey    = (v_int - self.cy) / self.fy
+
+            cv2.rectangle(cv_img, (bb_l, bb_t), (bb_r, bb_b), (0, 255, 0), 2)
+            cv2.circle(cv_img, (u_int, v_int), 7, (0, 60, 255), 2)
+            cv2.circle(cv_img, (u_int, v_int), 2, (0, 60, 255), -1)
+            cv2.arrowedLine(cv_img, (cx_img, cy_img), (u_int, v_int),
+                            (0, 140, 255), 2, tipLength=0.2)
+
+            # ex bar (bottom-center)
+            BAR_W = w // 3; BAR_H = 12
+            bx = (w - BAR_W) // 2; by = h - 28
+            cv2.rectangle(cv_img, (bx, by), (bx + BAR_W, by + BAR_H), (40, 40, 40), -1)
+            mid_bx = bx + BAR_W // 2
+            cv2.line(cv_img, (mid_bx, by - 2), (mid_bx, by + BAR_H + 2), (200, 200, 200), 1)
+            fill_ex = max(-BAR_W // 2, min(BAR_W // 2, int(ex * self.fx)))
+            col_ex  = (30, 200, 30) if abs(ex) < 0.1 else (0, 100, 255)
+            cv2.rectangle(cv_img, (mid_bx, by), (mid_bx + fill_ex, by + BAR_H), col_ex, -1)
+            cv2.rectangle(cv_img, (bx, by), (bx + BAR_W, by + BAR_H), (180, 180, 180), 1)
+            cv2.putText(cv_img, f'ex={ex:+.3f}', (bx, by - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+
+            # ey bar (right edge)
+            VB_W = 12; VB_H = h // 3
+            vbx = w - 24; vby = (h - VB_H) // 2
+            cv2.rectangle(cv_img, (vbx, vby), (vbx + VB_W, vby + VB_H), (40, 40, 40), -1)
+            mid_vy = vby + VB_H // 2
+            cv2.line(cv_img, (vbx - 2, mid_vy), (vbx + VB_W + 2, mid_vy), (200, 200, 200), 1)
+            fill_ey = max(-VB_H // 2, min(VB_H // 2, int(ey * self.fy)))
+            col_ey  = (30, 200, 30) if abs(ey) < 0.1 else (0, 100, 255)
+            cv2.rectangle(cv_img, (vbx, mid_vy), (vbx + VB_W, mid_vy + fill_ey), col_ey, -1)
+            cv2.rectangle(cv_img, (vbx, vby), (vbx + VB_W, vby + VB_H), (180, 180, 180), 1)
+            cv2.putText(cv_img, 'ey', (vbx - 2, vby - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+            cv2.putText(cv_img, f'{ey:+.2f}', (vbx - 10, vby + VB_H + 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+
+        # ── IBVS angles + yaw rate (from IBVSOutput) ────────────────────────
+        if self._latest_ibvs is not None and self._latest_ibvs.detected:
+            ibvs       = self._latest_ibvs
+            q_y        = ibvs.q_y
+            q_z        = ibvs.q_z
+            fov_yr     = ibvs.fov_yaw_rate
+
+        try:
+            out_msg        = self._bridge.cv2_to_imgmsg(cv_img, 'bgr8')
+            out_msg.header = self._latest_img.header
+            self.debug_img_pub.publish(out_msg)
+        except Exception:
+            pass
 
     # ----------------------------------------------------------------------- #
     #  PX4 VehicleLocalPosition – estimated trajectory (yellow)                #

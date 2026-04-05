@@ -88,12 +88,6 @@ class BalloonDetector(Node):
             10
         )
 
-        self.img_pub = self.create_publisher(
-            Image,
-            f'/inference_result_{self.system_id}',
-            10
-        )
-
         self.get_logger().info('Balloon Detector initialized')
         self.get_logger().info(f'Subscribing to: {self.camera_topic}')
 
@@ -137,21 +131,11 @@ class BalloonDetector(Node):
                         target_info.bottom     = int(y2)
                         self.yolov8_pub.publish(target_info)
 
-                        # Draw on image
-                        cv2.rectangle(cv_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-                        label = f'{self.model.names[cls_id]}: {conf:.2f}'
-                        cv2.putText(cv_image, label, (int(x1), int(y1) - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                         self.get_logger().info(
                             f'[DEBUG] Publishing detection: bbox=({int(x1)},{int(y1)},{int(x2)},{int(y2)}), topic=/target_info',
                             throttle_duration_sec=1.0
                         )
                         break  # first target only
-
-            # Publish visualization
-            img_msg = bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
-            img_msg.header = msg.header
-            self.img_pub.publish(img_msg)
 
         except Exception as e:
             self.get_logger().error(f'Error in camera callback: {str(e)}')
