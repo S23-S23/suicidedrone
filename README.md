@@ -14,41 +14,6 @@ The system supports two detector back-ends:
 
 ## Architecture
 
-### Node Graph
-
-```
-Gazebo Classic
- ├─ /gazebo/model_states (50 Hz)─────────────────────────────────────────┐
- │   ├──► gt_balloon_detector (projection onto image plane)              │
- │   ├──► balloon_mover       (GT collision check in ENU)                │
- │   └──► drone_visualizer    (GT trajectory marker)                     │
- ├─ /gazebo/link_states ──────► gt_balloon_detector (camera 6-DOF pose)  │
- └─ /drone{id}/camera/image_raw ─► gt_balloon_detector (timing sync)     │
-                                └─► drone_visualizer  (debug overlay)    │
-                                                                          │
-gt_balloon_detector ──► /target_info (TargetInfo)                        │
-                              │                                           │
-                       ibvs_controller                                   │
-                       ├─ /drone{id}/fmu/out/vehicle_attitude            │
-                       └─ /drone{id}/fmu/out/vehicle_angular_velocity    │
-                              │                                           │
-                       /ibvs/output (IBVSOutput)                         │
-                              │                                           │
-                       png_guidance                                       │
-                       ├─ /drone{id}/fmu/out/vehicle_attitude            │
-                       └─ /drone{id}/fmu/out/vehicle_local_position      │
-                              │                                           │
-                       /png/guidance_cmd (GuidanceCmd)                   │
-                              │                      ◄────────────────────┘
-                       drone_manager ◄── /balloon_collision (balloon_mover)
-                       ├─ /drone{id}/fmu/out/vehicle_status
-                       └─ /drone{id}/fmu/out/monitoring
-                              │
-                         PX4 SITL (offboard mode)
-                         ├─ trajectory_setpoint
-                         └─ offboard_control_mode
-```
-
 ### Nodes
 
 | Executable | Role |
@@ -89,18 +54,46 @@ IDLE ──[5 s timer]──► TAKEOFF ──[|alt - target| < 0.3 m]──► 
 ### IBVS + PNG Guidance (Reference: IEEE TIE 2025)
 
 **IBVS (`ibvs_controller`):**
-- Eq. 3: Image error — `ex = (u - cx)/fx`, `ey = (v - cy)/fy`
-- Eq. 5: LOS unit vector — `n_t = R_eb @ R_bc @ [ex, ey, 1]ᵀ`
-- Eq. 7: LOS angles — `q_y = atan2(-n_tz, ‖n_txy‖)`, `q_z = atan2(n_ty, n_tx)`
-- Eq. 13: FOV yaw rate — `ω = kp·ex + kd·(−(1+ex²)·ωz_body)`
-- Vertical: FOV Z vel — `vz = kp_z·ey + kd_z·(−(1+ey²)·ωy_body)`
+
+- **Eq. 3** — Image error:
+
+$$e_x = \frac{u - c_x}{f_x}, \quad e_y = \frac{v - c_y}{f_y}$$
+
+- **Eq. 5** — LOS unit vector:
+
+$$\mathbf{n}_t = R_{eb} \, R_{bc} \begin{bmatrix} e_x \\ e_y \\ 1 \end{bmatrix}$$
+
+- **Eq. 7** — LOS angles:
+
+$$q_y = \text{atan2}(-n_{t,z},\ \|\mathbf{n}_{t,xy}\|), \quad q_z = \text{atan2}(n_{t,y},\ n_{t,x})$$
+
+- **Eq. 13** — FOV yaw rate:
+
+$$\dot{\psi}_{fov} = k_p \, e_x + k_d \left(-(1 + e_x^2)\, \omega_{z}^{body}\right)$$
+
+- **Vertical** — FOV Z velocity:
+
+$$v_{z,fov} = k_{p,z} \, e_y + k_{d,z} \left(-(1 + e_y^2)\, \omega_{y}^{body}\right)$$
 
 **PNG (`png_guidance`):**
-- Eq. 8: Current velocity direction `(σ_y, σ_z)` from NED velocity or body forward
-- Eq. 9: Discrete PNG — `σ_d = q_now + K·los_rate·dt`
-- Eq. 10: Desired velocity unit vector `n_vd = [cos(σ_yd)cos(σ_zd), cos(σ_yd)sin(σ_zd), −sin(σ_yd)]`
-- Eq. 14: Speed ramp — `v = min(v + ka/rate, v_max)`
-- Final output: `vel_ned = v·n_vd`, `yaw_rate = fov_yaw_rate` (from IBVS), `vel_d += fov_vel_z`
+
+- **Eq. 8** — Current velocity direction $(\sigma_y,\, \sigma_z)$ derived from NED velocity $\mathbf{v}$ or body forward axis
+
+- **Eq. 9** — Discrete PNG update:
+
+$$\sigma_d = q_{now} + K \cdot \dot{q} \cdot \Delta t$$
+
+- **Eq. 10** — Desired velocity unit vector:
+
+$$\mathbf{n}_{vd} = \begin{bmatrix} \cos\sigma_{y,d}\cos\sigma_{z,d} \\ \cos\sigma_{y,d}\sin\sigma_{z,d} \\ -\sin\sigma_{y,d} \end{bmatrix}$$
+
+- **Eq. 14** — Speed ramp:
+
+$$v \leftarrow \min\!\left(v + \frac{k_a}{f_{rate}},\ v_{max}\right)$$
+
+- **Final output:**
+
+$$\mathbf{v}_{NED} = v\,\mathbf{n}_{vd}, \quad \dot{\psi} = \dot{\psi}_{fov}, \quad v_{d} \mathrel{+}= v_{z,fov}$$
 
 ---
 
