@@ -43,9 +43,10 @@ setup(
     entry_points={
         'console_scripts': [
             'balloon_detector = balloon_hunter.balloon_detector:main',
-            'position_estimator = balloon_hunter.position_estimator:main',
             'drone_manager = balloon_hunter.drone_manager:main',
-            'collision_handler = balloon_hunter.collision_handler:main',
+            'filter_node = balloon_hunter.filter_node:main',
+            'ibvs_controller = balloon_hunter.ibvs_controller:main',
+            'png_guidance = balloon_hunter.png_guidance:main',
             'target_mover = balloon_hunter.target_mover:main',
             'logger = balloon_hunter.logger:main',
             'graph = balloon_hunter.graph:main',

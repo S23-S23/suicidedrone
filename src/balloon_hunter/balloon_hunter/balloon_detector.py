@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Balloon Detector Node using YOLO
-Detects red balloons from camera feed using YOLOv8
-Based on yolov8_ros2_pt.py
+Detects red balloons from camera feed using YOLOv8.
+Publishes first matching detection as TargetInfo on /target_info.
 """
 
 import torch
@@ -12,7 +12,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-from yolov8_msgs.msg import InferenceResult, Yolov8Inference
+from suicide_drone_msgs.msg import TargetInfo
 import cv2
 
 bridge = CvBridge()
@@ -26,8 +26,8 @@ class BalloonDetector(Node):
         self.declare_parameter('system_id', 1)
         self.declare_parameter('camera_topic', '/drone1/camera/image_raw')
         self.declare_parameter('model_path', '/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt')
-        self.declare_parameter('conf', 0.5)  # Confidence threshold
-        self.declare_parameter('target_class', 'sports ball')  # Red balloon class in COCO dataset
+        self.declare_parameter('conf', 0.5)
+        self.declare_parameter('target_class', 'sports ball')
 
         self.system_id = self.get_parameter('system_id').value
         self.camera_topic = self.get_parameter('camera_topic').value
@@ -70,7 +70,7 @@ class BalloonDetector(Node):
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=5
         )
 
         # Subscriber
@@ -82,11 +82,7 @@ class BalloonDetector(Node):
         )
 
         # Publishers
-        self.yolov8_pub = self.create_publisher(
-            Yolov8Inference,
-            f'/Yolov8_Inference_{self.system_id}',
-            10
-        )
+        self.target_pub = self.create_publisher(TargetInfo, '/target_info', 10)
 
         self.img_pub = self.create_publisher(
             Image,
@@ -101,10 +97,8 @@ class BalloonDetector(Node):
         """Process camera images with YOLO"""
         try:
             self.get_logger().info('[DEBUG] Balloon detector: Camera callback triggered', throttle_duration_sec=5.0)
-            # Convert ROS Image to OpenCV
             cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-            # Run YOLO inference
             results = self.model.predict(
                 source=cv_image,
                 conf=self.conf,
@@ -112,52 +106,41 @@ class BalloonDetector(Node):
                 verbose=False
             )
 
-            # Process results
-            yolov8_inference = Yolov8Inference()
-            # Re-stamp with publish time (not camera capture time) so drone_manager
-            # can compute pipeline delay as (now - stamp) correctly.
-            yolov8_inference.header = msg.header
-            yolov8_inference.header.stamp = self.get_clock().now().to_msg()
-
             if results and len(results) > 0:
                 result = results[0]
                 boxes = result.boxes
 
                 if boxes is not None and len(boxes) > 0:
                     for box in boxes:
-                        # Get box coordinates
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                         conf = float(box.conf[0].cpu().numpy())
                         cls_id = int(box.cls[0].cpu().numpy())
 
-                        # Filter by target class if specified
                         if self.target_cls_id is not None and cls_id != self.target_cls_id:
                             continue
 
-                        # Create InferenceResult
-                        inference_result = InferenceResult()
-                        inference_result.class_name = self.model.names[cls_id]
-                        inference_result.left = int(x1)
-                        inference_result.top = int(y1)
-                        inference_result.right = int(x2)
-                        inference_result.bottom = int(y2)
-
-                        yolov8_inference.yolov8_inference.append(inference_result)
+                        # Publish first detection as TargetInfo
+                        target_info            = TargetInfo()
+                        target_info.header     = msg.header
+                        target_info.header.stamp = self.get_clock().now().to_msg()
+                        target_info.class_name = self.model.names[cls_id]
+                        target_info.left       = int(x1)
+                        target_info.top        = int(y1)
+                        target_info.right      = int(x2)
+                        target_info.bottom     = int(y2)
+                        self.target_pub.publish(target_info)
 
                         # Draw on image
                         cv2.rectangle(cv_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-                        label = f'{inference_result.class_name}: {conf:.2f}'
+                        label = f'{target_info.class_name}: {conf:.2f}'
                         cv2.putText(cv_image, label, (int(x1), int(y1) - 10),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-            # Publish results
-            if len(yolov8_inference.yolov8_inference) > 0:
-                self.yolov8_pub.publish(yolov8_inference)
-                det = yolov8_inference.yolov8_inference[0]
-                self.get_logger().info(
-                    f'[DEBUG] Publishing detection: {len(yolov8_inference.yolov8_inference)} target(s), bbox=({det.left},{det.top},{det.right},{det.bottom}), topic=/Yolov8_Inference_{self.system_id}',
-                    throttle_duration_sec=1.0
-                )
+                        self.get_logger().info(
+                            f'[DEBUG] Publishing detection: bbox=({int(x1)},{int(y1)},{int(x2)},{int(y2)}), topic=/target_info',
+                            throttle_duration_sec=1.0
+                        )
+                        break  # first target only
 
             # Publish visualization
             img_msg = bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')

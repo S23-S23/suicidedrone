@@ -29,7 +29,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from px4_msgs.msg import Monitoring, VehicleLocalPosition, VehicleAngularVelocity
-from yolov8_msgs.msg import Yolov8Inference
+from suicide_drone_msgs.msg import TargetInfo
 from geometry_msgs.msg import Point
 from std_msgs.msg import Float32MultiArray, String
 
@@ -62,7 +62,7 @@ class FilterLogger(Node):
         self.declare_parameter('cx', 424.0)
         self.declare_parameter('cy', 240.0)
         self.declare_parameter('cam_pitch_deg', 0.0)
-        self.declare_parameter('detection_topic', '/Yolov8_Inference_1')
+        self.declare_parameter('detection_topic', '/target_info')
         self.declare_parameter('collision_distance', 1.0)
 
         self.filter_type = self.get_parameter('filter_type').value.upper()
@@ -157,7 +157,7 @@ class FilterLogger(Node):
             self.avel_cb, qos
         )
         self.create_subscription(
-            Yolov8Inference,
+            TargetInfo,
             self.get_parameter('detection_topic').value,
             self.det_cb, 10
         )
@@ -201,12 +201,9 @@ class FilterLogger(Node):
         """Angular velocity in body-FRD from VehicleAngularVelocity."""
         self.drone_omega = np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
 
-    def det_cb(self, msg: Yolov8Inference):
-        if not msg.yolov8_inference:
-            return
-        d = msg.yolov8_inference[0]
-        self.yolo_u = (d.left + d.right) * 0.5
-        self.yolo_v = (d.top + d.bottom) * 0.5
+    def det_cb(self, msg: TargetInfo):
+        self.yolo_u = (msg.left + msg.right) * 0.5
+        self.yolo_v = (msg.top + msg.bottom) * 0.5
         now = self.get_clock().now().nanoseconds / 1e9
         if self.yolo_first_t is None:
             self.yolo_first_t = now

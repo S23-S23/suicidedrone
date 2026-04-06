@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """
-Launch file for IBVS + PNG balloon interception with DKF/EKF selection.
+Launch file for modular IBVS + PNG balloon interception.
+
+Architecture:
+  balloon_detector (or gt_balloon_detector)  -> /target_info
+  ibvs_controller                            -> /ibvs/output
+  png_guidance                               -> /png/guidance_cmd
+  drone_manager (thin FSM)                   -> PX4 setpoints
+  filter_node (DKF/EKF)                      -> /filter_estimate (for logger)
 
 Usage:
   ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py filter_type:=DKF
   ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py filter_type:=EKF
+  ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py detector_type:=GT filter_type:=GT
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -29,11 +37,11 @@ def launch_setup(context, *args, **kwargs):
     detector_type = LaunchConfiguration('detector_type').perform(context)
     drone_id = 1
 
-    # Environment
+    # ── Environment ──
     resource_path_env = SetEnvironmentVariable('GAZEBO_RESOURCE_PATH', '/usr/share/gazebo-11')
     model_path_env = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
-        f'{current_package_path}/models:'  # local models take priority
+        f'{current_package_path}/models:'
         f'{px4_src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:'
         f'{gazebo_classic_path}/models'
     )
@@ -43,7 +51,7 @@ def launch_setup(context, *args, **kwargs):
     )
     gz_ip_env = SetEnvironmentVariable('GZ_IP', '127.0.0.1')
 
-    # Infrastructure
+    # ── Infrastructure ──
     xrce_agent_process = ExecuteProcess(
         cmd=['MicroXRCEAgent', 'udp4', '-p', '8888'], output='screen'
     )
@@ -57,7 +65,7 @@ def launch_setup(context, *args, **kwargs):
         launch_arguments={'world': world_file_path, 'verbose': 'false', 'gui': 'true'}.items()
     )
 
-    # SDF generation
+    # ── SDF generation ──
     def create_drone_sdf_cmd(idx, tcp_port, udp_port, model_name):
         template_file = os.path.join(current_package_path, 'models', model_name, f'{model_name}.sdf.jinja')
         return ExecuteProcess(
@@ -74,7 +82,7 @@ def launch_setup(context, *args, **kwargs):
 
     gen_sdf_drone1 = create_drone_sdf_cmd(drone_id, 4560, 14560, 'iris_depth_camera')
 
-    # Spawn
+    # ── Spawn ──
     spawn_drone1 = Node(
         package='gazebo_ros', executable='spawn_entity.py',
         arguments=[
@@ -86,7 +94,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen'
     )
 
-    # PX4 SITL
+    # ── PX4 SITL ──
     px4_process_1 = ExecuteProcess(
         cmd=[
             f'{px4_src_path}/build/px4_sitl_default/bin/px4',
@@ -103,8 +111,12 @@ def launch_setup(context, *args, **kwargs):
         output='screen'
     )
 
-    # ── Mission nodes ──
-    balloon_detector = Node(
+    # ══════════════════════════════════════════════════════════════
+    #  Mission nodes — all with use_sim_time: True
+    # ══════════════════════════════════════════════════════════════
+
+    # 1. Detector (YOLO or GT)
+    balloon_detector_node = Node(
         package='balloon_hunter',
         executable='balloon_detector',
         name='balloon_detector',
@@ -115,11 +127,11 @@ def launch_setup(context, *args, **kwargs):
             'camera_topic': f'/drone{drone_id}/camera/image_raw',
             'model_path': model_path,
             'conf': 0.5,
-            'target_class': 'sports ball'
+            'target_class': 'sports ball',
         }]
     )
 
-    gt_balloon_detector = Node(
+    gt_balloon_detector_node = Node(
         package='balloon_hunter',
         executable='gt_balloon_detector',
         name='balloon_detector',
@@ -144,15 +156,54 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # Select detector based on launch argument; GT detector forces filter_type=GT
     if detector_type == 'GT':
-        detector_node = gt_balloon_detector
+        detector_node = gt_balloon_detector_node
         filter_type = 'GT'
     else:
-        detector_node = balloon_detector
+        detector_node = balloon_detector_node
 
-    # Controller with filter_type from launch argument
-    drone_manager = Node(
+    # 2. IBVS Controller
+    ibvs_controller_node = Node(
+        package='balloon_hunter',
+        executable='ibvs_controller',
+        name='ibvs_controller',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'system_id': drone_id,
+            'fx': 454.8,
+            'fy': 454.8,
+            'cx': 424.0,
+            'cy': 240.0,
+            'fov_kp': 1.5,
+            'fov_kd': 0.1,
+            'fov_kp_z': 1.5,
+            'fov_kd_z': 0.1,
+            'target_timeout': 0.5,
+        }]
+    )
+
+    # 3. PNG Guidance
+    png_guidance_node = Node(
+        package='balloon_hunter',
+        executable='png_guidance',
+        name='png_guidance',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'system_id': drone_id,
+            'Ky': 3.0,
+            'Kz': 3.0,
+            'ka': 2.0,
+            'v_max': 10.0,
+            'v_init': 3.5,
+            'rate': 50.0,
+            'v_min_sigma': 0.5,
+        }]
+    )
+
+    # 4. Drone Manager (thin FSM)
+    drone_manager_node = Node(
         package='balloon_hunter',
         executable='drone_manager',
         name='drone_manager',
@@ -160,55 +211,59 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'system_id': drone_id,
-            'filter_type': filter_type,           # ← DKF or EKF
             'takeoff_height': 6.0,
+            'forward_distance_limit': 50.0,
+            'collision_distance': 2.0,
+            'mission_timeout': 60.0,
+            'max_speed': 10.0,
+        }]
+    )
+
+    # 5. Filter Node (DKF/EKF — for logger, runs alongside IBVS+PNG)
+    filter_node = Node(
+        package='balloon_hunter',
+        executable='filter_node',
+        name='filter_node',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'system_id': drone_id,
+            'filter_type': filter_type,
             'fx': 454.8,
             'fy': 454.8,
             'cx': 424.0,
             'cy': 240.0,
             'cam_pitch_deg': 0.0,
-            'kp_yaw': 0.20,           # max ~10 rad/s @ 50Hz
-            'kd_yaw': 0.0003,
             'dkf_dt': 0.02,
-            'dkf_delay_steps': 2,     # YOLO ~30Hz → ~33ms delay / 20ms dt ≈ 2 steps
-            'detection_topic': f'/Yolov8_Inference_{drone_id}',
-            'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
+            'dkf_delay_steps': 2,
+            'assumed_depth': 10.0,
         }]
     )
 
-    # Logger with filter_type for CSV filename (supports DKF / EKF / GT)
-    logger = Node(
+    # 6. Logger
+    logger_node = Node(
         package='balloon_hunter',
         executable='logger',
         name='logger',
         output='screen',
         parameters=[{
             'use_sim_time': True,
-            'filter_type': filter_type,           # ← DKF, EKF, or GT
+            'filter_type': filter_type,
             'system_id': drone_id,
-            'target_gazebo_x':  3.0,   # fallback static GT (overridden by /target_world_pos); balloon sphere center
+            'target_gazebo_x':  3.0,
             'target_gazebo_y':  10.0,
-            'target_gazebo_z':  6.5,   # model root z(5.0) + balloon_link_z_offset(1.5)
+            'target_gazebo_z':  6.5,
             'fx': 454.8,
             'fy': 454.8,
             'cx': 424.0,
             'cy': 240.0,
             'cam_pitch_deg': 0.0,
-            'detection_topic': f'/Yolov8_Inference_{drone_id}',
-            'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
             'collision_distance': 2.0,
         }]
     )
 
-    collision_handler = Node(
-        package='balloon_hunter',
-        executable='collision_handler',
-        name='collision_handler',
-        output='screen',
-        parameters=[{'use_sim_time': True, 'collision_distance': 2.0, 'drone_id': drone_id}]
-    )
-
-    target_mover = Node(
+    # 7. Target Mover
+    target_mover_node = Node(
         package='balloon_hunter',
         executable='target_mover',
         name='target_mover',
@@ -216,17 +271,17 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'target_name': 'target_balloon',
-            'nominal_x':    3.0,    # Gazebo X (model root)
-            'nominal_y':    13.0,    # Gazebo Y (model root, fixed)
-            'nominal_z':    5.0,    # Gazebo Z (model root, matches world file pose z)
-            'amplitude':    0.0,    # ±m swing; 0=static
-            'speed':        0.0,    # m/s; 0=static
-            'balloon_link_z_offset': 1.5,  # from model.sdf <pose>0 0 1.5</pose>
+            'nominal_x':    3.0,
+            'nominal_y':    13.0,
+            'nominal_z':    5.0,
+            'amplitude':    0.0,
+            'speed':        0.0,
+            'balloon_link_z_offset': 1.5,
         }]
     )
 
-    # Drone Visualizer (RViz2: TF, trajectory path, balloon marker)
-    drone_visualizer = Node(
+    # 8. Drone Visualizer
+    drone_visualizer_node = Node(
         package='balloon_hunter',
         executable='drone_visualizer',
         name='drone_visualizer',
@@ -241,7 +296,7 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    # RViz2
+    # 9. RViz2
     rviz_config = os.path.join(current_package_path, 'config', 'drone_trajectory.rviz')
     rviz_node = Node(
         package='rviz2',
@@ -251,7 +306,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    # Event chaining
+    # ── Event chaining ──
     start_spawn_drone1 = TimerAction(period=2.0, actions=[spawn_drone1])
 
     px4_1_event = RegisterEventHandler(
@@ -262,11 +317,14 @@ def launch_setup(context, *args, **kwargs):
     mission_nodes_event = RegisterEventHandler(
         OnProcessExit(target_action=spawn_drone1, on_exit=[
             TimerAction(period=10.0, actions=[
-                target_mover,
+                target_mover_node,
                 detector_node,
-                drone_manager,
-                logger,
-                drone_visualizer,
+                ibvs_controller_node,
+                png_guidance_node,
+                filter_node,
+                drone_manager_node,
+                logger_node,
+                drone_visualizer_node,
             ])
         ])
     )
