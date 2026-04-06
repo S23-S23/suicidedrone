@@ -2,7 +2,7 @@
 """
 Balloon Hunter - Ground Truth Mode Launch File
 Uses Gazebo Ground Truth instead of YOLO + position_estimator.
-Removes the balloon_detector and position_estimator nodes and
+Removes the target_detector and position_estimator nodes and
 replaces them with the ground_truth_target_provider node.
 """
 
@@ -107,12 +107,12 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    # [GT] Ground Truth Balloon Detector (replaces YOLO-based balloon_detector)
-    # Output: /target_info  →  received by ibvs_controller
-    gt_balloon_detector = Node(
+    # [GT] Ground Truth Balloon Detector (replaces YOLO-based target_detector)
+    # Output: /target_info  →  received by ibvs
+    target_detector_gt = Node(
         package='balloon_hunter',
-        executable='gt_balloon_detector',
-        name='balloon_detector',
+        executable='target_detector_gt',
+        name='target_detector_gt',
         output='screen',
         parameters=[{
             'system_id': drone_id,
@@ -128,10 +128,10 @@ def launch_setup(context, *args, **kwargs):
 
     # [IBVS] Image-Based Visual Servoing Controller
     # Computes LOS angles (Eq.5,7), image error (Eq.3), FOV yaw/Z rate (Eq.13)
-    ibvs_controller = Node(
+    ibvs = Node(
         package='balloon_hunter',
-        executable='ibvs_controller',
-        name='ibvs_controller',
+        executable='ibvs',
+        name='ibvs',
         output='screen',
         parameters=[{
             'system_id': drone_id,
@@ -149,10 +149,10 @@ def launch_setup(context, *args, **kwargs):
 
     # [PNG] Proportional Navigation Guidance
     # Computes NED velocity command (Eq.8,9,10,14)
-    png_guidance = Node(
+    png = Node(
         package='balloon_hunter',
-        executable='png_guidance',
-        name='png_guidance',
+        executable='png',
+        name='png',
         output='screen',
         parameters=[{
             'system_id': drone_id,
@@ -166,10 +166,10 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # Drone Manager (INTERCEPT state uses PNG velocity + IBVS yaw rate)
-    drone_manager = Node(
+    px4_agent = Node(
         package='balloon_hunter',
-        executable='drone_manager',
-        name='balloon_hunter_drone_manager',
+        executable='px4_agent',
+        name='px4_agent',
         output='screen',
         parameters=[{
             'system_id': drone_id,
@@ -222,13 +222,13 @@ def launch_setup(context, *args, **kwargs):
             output='screen',
         ))
 
-    # Balloon Mover
+    # Balloon
     # Moves the target balloon when the drone enters FORWARD state.
     # movement_pattern driven by the 'move' launch argument.
-    balloon_mover = Node(
+    balloon = Node(
         package='balloon_hunter',
-        executable='balloon_mover',
-        name='balloon_mover',
+        executable='balloon',
+        name='balloon',
         output='screen',
         parameters=[{
             'balloon_model_name': 'target_balloon',
@@ -253,13 +253,13 @@ def launch_setup(context, *args, **kwargs):
         jinja_process,
         spawn_entity_node,
         px4_process,
-        gt_balloon_detector,   # → /target_info
-        ibvs_controller,       # → /ibvs/target_detected, /ibvs/los_angles, /ibvs/fov_yaw_rate
-        png_guidance,          # → /png/velocity_cmd
-        drone_manager,         # consumes ibvs + png outputs
+        target_detector_gt,   # → /target_info
+        ibvs,       # → /ibvs/target_detected, /ibvs/los_angles, /ibvs/fov_yaw_rate
+        png,          # → /png/velocity_cmd
+        px4_agent,         # consumes ibvs + png outputs
         drone_visualizer,
         rviz_node,
-        balloon_mover,         # moves target balloon on FORWARD state entry
+        balloon,         # moves target balloon on FORWARD state entry
         *bag_actions,          # ros2 bag record (mcap) — empty list when bag_enable=false
     ]
 

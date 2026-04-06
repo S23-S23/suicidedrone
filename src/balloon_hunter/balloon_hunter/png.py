@@ -51,7 +51,7 @@ def quat_to_R(q):
 
 class PNGGuidance(Node):
     def __init__(self):
-        super().__init__('png_guidance')
+        super().__init__('png')
 
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('system_id', 1)
@@ -62,7 +62,7 @@ class PNGGuidance(Node):
         self.declare_parameter('ka',    0.2)  # acceleration increment [m/s per second]
         self.declare_parameter('v_max',  2.0) # maximum speed [m/s]
         self.declare_parameter('v_init', 0.5) # initial speed on intercept start [m/s]
-        # Guidance loop rate [Hz] – should match camera and drone_manager mission timer
+        # Guidance loop rate [Hz] – should match camera and px4_agent mission timer
         self.declare_parameter('rate', 50.0)
         # Minimum NED speed [m/s] to trust velocity-derived sigma (Eq.8)
         # Below this threshold, fall back to body forward axis

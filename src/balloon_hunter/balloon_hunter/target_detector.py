@@ -20,7 +20,7 @@ bridge = CvBridge()
 
 class BalloonDetector(Node):
     def __init__(self):
-        super().__init__('balloon_detector')
+        super().__init__('target_detector')
 
         # Parameters
         self.declare_parameter('system_id', 1)

@@ -122,10 +122,10 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # Balloon Detector Node (YOLO)
-    balloon_detector = Node(
+    target_detector = Node(
         package='balloon_hunter',
-        executable='balloon_detector',
-        name='balloon_detector',
+        executable='target_detector',
+        name='target_detector',
         output='screen',
         parameters=[{
             'system_id': drone_id,
@@ -152,10 +152,10 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # Drone Manager Node
-    drone_manager = Node(
+    px4_agent = Node(
         package='balloon_hunter',
-        executable='drone_manager',
-        name='balloon_hunter_drone_manager',
+        executable='px4_agent',
+        name='px4_agent',
         output='screen',
         parameters=[{
             'system_id': drone_id,
@@ -203,9 +203,9 @@ def launch_setup(context, *args, **kwargs):
         jinja_process,
         spawn_entity_node,
         px4_process,
-        balloon_detector,
+        target_detector,
         position_estimator,
-        drone_manager,
+        px4_agent,
         drone_visualizer,
         rviz_node,
     ]

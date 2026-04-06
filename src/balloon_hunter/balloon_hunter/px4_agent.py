@@ -35,9 +35,9 @@ class MissionState(Enum):
     DONE      = 4
 
 
-class BalloonHunterDroneManager(Node):
+class PX4Agent(Node):
     def __init__(self):
-        super().__init__('drone_manager')
+        super().__init__('px4_agent')
 
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('system_id',          1)
@@ -379,7 +379,7 @@ class BalloonHunterDroneManager(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = BalloonHunterDroneManager()
+    node = PX4Agent()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

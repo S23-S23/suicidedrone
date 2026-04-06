@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Launch file for Balloon Hunter simulation
-Based on yolov8 and drone_manager structure
+Based on yolov8 and px4_agent structure
 """
 
 from launch import LaunchDescription
@@ -25,10 +25,10 @@ def generate_launch_description():
     )
 
     # Balloon Detector Node (YOLO-based)
-    balloon_detector = Node(
+    target_detector = Node(
         package='balloon_hunter',
-        executable='balloon_detector',
-        name='balloon_detector',
+        executable='target_detector',
+        name='target_detector',
         output='screen',
         parameters=[{
             'system_id': LaunchConfiguration('drone_id'),
@@ -54,10 +54,10 @@ def generate_launch_description():
     )
 
     # Drone Manager Node (mission control)
-    drone_manager = Node(
+    px4_agent = Node(
         package='balloon_hunter',
-        executable='drone_manager',
-        name='drone_manager',
+        executable='px4_agent',
+        name='px4_agent',
         output='screen',
         parameters=[{
             'system_id': LaunchConfiguration('drone_id'),
@@ -73,7 +73,7 @@ def generate_launch_description():
     return LaunchDescription([
         drone_id_arg,
         model_path_arg,
-        balloon_detector,
+        target_detector,
         position_estimator,
-        drone_manager,
+        px4_agent,
     ])

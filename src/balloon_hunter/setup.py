@@ -34,14 +34,14 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'balloon_detector = balloon_hunter.balloon_detector:main',
+            'target_detector = balloon_hunter.target_detector:main',
             'position_estimator = balloon_hunter.position_estimator:main',
-            'drone_manager = balloon_hunter.drone_manager:main',
+            'px4_agent = balloon_hunter.px4_agent:main',
             'drone_visualizer = balloon_hunter.drone_visualizer:main',
-            'gt_balloon_detector = balloon_hunter.gt_balloon_detector:main',
-            'ibvs_controller = balloon_hunter.ibvs_controller:main',
-            'png_guidance = balloon_hunter.png_guidance:main',
-'balloon_mover = balloon_hunter.balloon_mover:main',
+            'target_detector_gt = balloon_hunter.target_detector_gt:main',
+            'ibvs = balloon_hunter.ibvs:main',
+            'png = balloon_hunter.png:main',
+            'balloon = balloon_hunter.balloon:main',
         ],
     },
 )

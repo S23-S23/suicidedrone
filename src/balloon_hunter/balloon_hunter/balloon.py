@@ -43,7 +43,7 @@ class Pattern:
 
 class BalloonMover(Node):
     def __init__(self):
-        super().__init__('balloon_mover')
+        super().__init__('balloon')
 
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('balloon_model_name', 'target_balloon')

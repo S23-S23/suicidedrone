@@ -13,7 +13,7 @@ Equations implemented:
   Eq.(13): FOV yaw rate controller using IMU angular velocity (avoids numerical diff)
 
 Subscriptions:
-  /target_info                        – gt_balloon_detector output
+  /target_info                        – target_detector output
   drone{id}/fmu/out/vehicle_attitude  – quaternion FRD body → NED
   drone{id}/fmu/out/vehicle_angular_velocity – FRD body angular velocity
 
@@ -47,7 +47,7 @@ def quat_to_R(q):
 
 class IBVSController(Node):
     def __init__(self):
-        super().__init__('ibvs_controller')
+        super().__init__('ibvs')
 
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('system_id', 1)

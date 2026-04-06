@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Ground Truth Balloon Detector Node
-Drop-in replacement for balloon_detector (YOLO).
+Drop-in replacement for target_detector (YOLO).
 
 Reads the balloon's true 3D position from /gazebo/model_states and the
 camera's true pose (position + orientation) from /gazebo/link_states,
@@ -34,12 +34,12 @@ Gazebo SDF link frame to the OpenCV camera frame:
   opencv-Y (down)    = -link-Z  →  row: [0,  0, -1]
   opencv-Z (forward) =  link-X  →  row: [1,  0,  0]
 
-Input  (identical to balloon_detector):
+Input  (identical to target_detector):
   /drone{id}/camera/image_raw   - timing sync + visualization base image
   /gazebo/model_states          - balloon 3D ground-truth position
   /gazebo/link_states           - camera link 6-DOF pose (position + orientation)
 
-Output (identical to balloon_detector):
+Output (identical to target_detector):
   /target_info                  - suicide_drone_msgs/TargetInfo (bounding box)
 """
 
@@ -83,7 +83,7 @@ class GtBalloonDetector(Node):
     def __init__(self):
         super().__init__('target_detector')  # keep same node name as YOLO version
 
-        # --- Parameters (same structure as balloon_detector) ----------------
+        # --- Parameters (same structure as target_detector) ----------------
         self.declare_parameter('system_id', 1)
         self.declare_parameter('camera_topic', '/drone1/camera/image_raw')
         # Camera intrinsics – must match position_estimator defaults
