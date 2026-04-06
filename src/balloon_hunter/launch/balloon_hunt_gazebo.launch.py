@@ -110,6 +110,7 @@ def launch_setup(context, *args, **kwargs):
         name='balloon_detector',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'system_id': drone_id,
             'camera_topic': f'/drone{drone_id}/camera/image_raw',
             'model_path': model_path,
@@ -124,6 +125,7 @@ def launch_setup(context, *args, **kwargs):
         name='balloon_detector',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'system_id': drone_id,
             'camera_topic': f'/drone{drone_id}/camera/image_raw',
             'width': 848,
@@ -156,6 +158,7 @@ def launch_setup(context, *args, **kwargs):
         name='drone_manager',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'system_id': drone_id,
             'filter_type': filter_type,           # ← DKF or EKF
             'takeoff_height': 6.0,
@@ -167,7 +170,7 @@ def launch_setup(context, *args, **kwargs):
             'kp_yaw': 0.20,           # max ~10 rad/s @ 50Hz
             'kd_yaw': 0.0003,
             'dkf_dt': 0.02,
-            'dkf_delay_steps': 10,    # 200ms / 20ms = 10 steps
+            'dkf_delay_steps': 2,     # YOLO ~30Hz → ~33ms delay / 20ms dt ≈ 2 steps
             'detection_topic': f'/Yolov8_Inference_{drone_id}',
             'monitoring_topic': f'/drone{drone_id}/fmu/out/monitoring',
         }]
@@ -180,6 +183,7 @@ def launch_setup(context, *args, **kwargs):
         name='logger',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'filter_type': filter_type,           # ← DKF, EKF, or GT
             'system_id': drone_id,
             'target_gazebo_x':  3.0,   # fallback static GT (overridden by /target_world_pos); balloon sphere center
@@ -201,7 +205,7 @@ def launch_setup(context, *args, **kwargs):
         executable='collision_handler',
         name='collision_handler',
         output='screen',
-        parameters=[{'collision_distance': 2.0, 'drone_id': drone_id}]
+        parameters=[{'use_sim_time': True, 'collision_distance': 2.0, 'drone_id': drone_id}]
     )
 
     target_mover = Node(
@@ -210,12 +214,13 @@ def launch_setup(context, *args, **kwargs):
         name='target_mover',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'target_name': 'target_balloon',
             'nominal_x':    3.0,    # Gazebo X (model root)
-            'nominal_y':    10.0,    # Gazebo Y (model root, fixed)
+            'nominal_y':    13.0,    # Gazebo Y (model root, fixed)
             'nominal_z':    5.0,    # Gazebo Z (model root, matches world file pose z)
-            'amplitude':    3.5,    # ±m swing; 0=static
-            'speed':        10.0,    # m/s; 0=static
+            'amplitude':    0.0,    # ±m swing; 0=static
+            'speed':        0.0,    # m/s; 0=static
             'balloon_link_z_offset': 1.5,  # from model.sdf <pose>0 0 1.5</pose>
         }]
     )
@@ -227,6 +232,7 @@ def launch_setup(context, *args, **kwargs):
         name='drone_visualizer',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'system_id': drone_id,
             'max_path_points': 5000,
             'balloon_model_name': 'target_balloon',

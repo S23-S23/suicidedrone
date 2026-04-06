@@ -36,6 +36,7 @@ from px4_msgs.msg import (
     Monitoring,
     VehicleLocalPosition,
     VehicleAngularVelocity,
+    VehicleAcceleration,        # added for 18-state DKF: specific force in FRD body
 )
 from geometry_msgs.msg import PoseStamped, Point
 from yolov8_msgs.msg import Yolov8Inference
@@ -77,17 +78,27 @@ class DelayedKalmanFilter:
 
     IMU-based prediction via image Jacobian (Eq. 51).
     Delayed measurement correction + IMU re-propagation (Algorithm 2).
-    Stability guards: state clipping + covariance reset.
+
+    Follows Yang et al. 2025 (Algorithm 2) without engineering hacks:
+      - No state clamping
+      - No covariance reset
+      - Innovation gating (chi-squared test) for outlier rejection
+      - Joseph form covariance update for numerical stability
+
+    delay_steps=0: standard EKF (no re-propagation).
+    delay_steps>0: full DKF with history buffer and re-propagation.
     """
 
     def __init__(self, foc, R_b_c, dt=0.02, delay_steps=10, assumed_depth=10.0,
-                 max_history=50):
+                 max_history=50, chi2_threshold=9.21):
         self.foc = foc
         self.R_b_c = R_b_c
         self.R_c_b = R_b_c.T
         self.dt = dt
         self.D = delay_steps
         self.pzc = assumed_depth
+        # chi^2 threshold for innovation gating (2 DOF, 99% → 9.21)
+        self.chi2_threshold = chi2_threshold
 
         self.x = np.zeros(4)
         self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
@@ -135,7 +146,7 @@ class DelayedKalmanFilter:
         return F
 
     def predict(self, omega_body, vel_ned, R_e_b):
-        """Algorithm 2, line 4: propagate state with IMU data."""
+        """Algorithm 2, line 4: propagate state with IMU data (Eq. 30-31)."""
         if not self.initialized:
             return
         px, py = self.x[0], self.x[1]
@@ -148,21 +159,14 @@ class DelayedKalmanFilter:
             'w': omega_body.copy(), 'v': vel_ned.copy(), 'R': R_e_b.copy(),
         })
 
-        # State prediction
+        # State prediction (Eq. 30)
         self.x[0] += dp[0] + self.x[2] * self.dt
         self.x[1] += dp[1] + self.x[3] * self.dt
+        # Covariance prediction (Eq. 31)
         self.P = F @ self.P @ F.T + self.Q
 
-        # Stability guards
-        self.x[0] = np.clip(self.x[0], -3.0, 3.0)
-        self.x[1] = np.clip(self.x[1], -3.0, 3.0)
-        self.x[2] = np.clip(self.x[2], -0.5, 0.5)
-        self.x[3] = np.clip(self.x[3], -0.5, 0.5)
-        if np.any(np.diag(self.P) > 10.0):
-            self.P = np.eye(4) * 0.1
-
     def update(self, z_pixel, delay_steps=None):
-        """Algorithm 2, lines 5-9: correct with DELAYED measurement.
+        """Algorithm 2, lines 5-9: correct with DELAYED measurement (Eq. 34-36).
 
         delay_steps: actual measured delay in predict-steps. If None, falls
                      back to the fixed self.D. Caller computes this from
@@ -178,31 +182,35 @@ class DelayedKalmanFilter:
             return
 
         D = int(delay_steps) if delay_steps is not None else self.D
-        D = max(1, min(D, self.D + 5))  # sanity clamp: max ~15 steps (300ms)
+        D = max(0, min(D, self.D + 5))  # 0 = EKF mode; cap at D+5 steps
+
+        if D == 0:
+            self._std_correct(zb)
+            return
 
         hl = len(self.history)
         if hl < D:
             self._std_correct(zb)
             return
 
-        # If drone is rotating fast, re-propagation becomes unreliable → fall back
-        recent = list(self.history)[-D:]
-        max_omega = max(np.linalg.norm(h['w']) for h in recent)
-        if max_omega > 0.3:  # rad/s threshold
-            self._std_correct(zb)
-            return
-
-        # Step 1: Retrieve state at the estimated capture time
+        # Step 1: Retrieve state at the estimated capture time (Eq. 34)
         idx = hl - D
         xd, Pd = self.history[idx]['x'].copy(), self.history[idx]['P'].copy()
 
-        # Step 2: Correct state at t-D with current measurement
+        # Innovation gating at t-D: reject measurement if statistically inconsistent
+        innovation = zb - self.H @ xd
         S = self.H @ Pd @ self.H.T + self.R
-        K = Pd @ self.H.T @ np.linalg.inv(S)
-        xc = xd + K @ (zb - self.H @ xd)
-        Pc = (np.eye(4) - K @ self.H) @ Pd
+        d2 = float(innovation @ np.linalg.inv(S) @ innovation)
+        if d2 > self.chi2_threshold:
+            return  # outlier — discard measurement
 
-        # Step 3: Re-propagate from t-D to now using stored IMU data
+        # Step 2: Correct state at t-D (Eq. 34-36), Joseph form for numerical stability
+        K = Pd @ self.H.T @ np.linalg.inv(S)
+        xc = xd + K @ innovation
+        IKH = np.eye(4) - K @ self.H
+        Pc = IKH @ Pd @ IKH.T + K @ self.R @ K.T
+
+        # Step 3: Re-propagate from t-D to now using stored IMU data (Eq. 30-31)
         for i in range(idx, hl):
             h = self.history[i]
             dp, wc, vzc, pz = self._imu_image_motion(
@@ -211,20 +219,24 @@ class DelayedKalmanFilter:
             F = self._build_F(xc[0], xc[1], wc, vzc, pz)
             xc[0] += dp[0] + xc[2] * self.dt
             xc[1] += dp[1] + xc[3] * self.dt
-            xc[0] = np.clip(xc[0], -3.0, 3.0)
-            xc[1] = np.clip(xc[1], -3.0, 3.0)
-            xc[2] = np.clip(xc[2], -0.5, 0.5)
-            xc[3] = np.clip(xc[3], -0.5, 0.5)
             Pc = F @ Pc @ F.T + self.Q
 
         # Step 4: Replace current state with re-propagated result
         self.x, self.P = xc, Pc
 
     def _std_correct(self, zb):
+        """Standard EKF correction (no delay). Used when D=0 or history insufficient."""
+        innovation = zb - self.H @ self.x
         S = self.H @ self.P @ self.H.T + self.R
+        # Innovation gating: reject if Mahalanobis distance exceeds chi^2 threshold
+        d2 = float(innovation @ np.linalg.inv(S) @ innovation)
+        if d2 > self.chi2_threshold:
+            return  # outlier — discard measurement
         K = self.P @ self.H.T @ np.linalg.inv(S)
-        self.x += K @ (zb - self.H @ self.x)
-        self.P = (np.eye(4) - K @ self.H) @ self.P
+        self.x += K @ innovation
+        # Joseph form: P = (I-KH)*P*(I-KH)^T + K*R*K^T (positive definiteness guarantee)
+        IKH = np.eye(4) - K @ self.H
+        self.P = IKH @ self.P @ IKH.T + K @ self.R @ K.T
 
     def get_pixel(self):
         if not self.initialized:
@@ -234,94 +246,476 @@ class DelayedKalmanFilter:
 
 
 # ══════════════════════════════════════════════════════════════
-# EKF (IMU-driven, no delay compensation)
+# DKF-18  (Paper-faithful, Yang et al. 2025, full 18-state)
 # ══════════════════════════════════════════════════════════════
-class SimpleEKF:
+class DelayedKalmanFilter18:
     """
-    Same IMU-driven motion model as DKF for fair comparison.
-    Only difference: treats delayed measurement as current (no re-propagation).
+    Full 18-state Delayed Kalman Filter (Yang et al. 2025, Algorithm 2).
+
+    State vector x (18,):
+    ┌──────────┬───────┬────────────────────────────────────────────────────┐
+    │ Component│ Index │ Description                                        │
+    ├──────────┼───────┼────────────────────────────────────────────────────┤
+    │ q        │  0:4  │ Unit quaternion [qw qx qy qz]  (NED ← body-FRD)   │
+    │ p_r      │  4:7  │ Relative position NED = target − drone  [m]        │
+    │ v_r      │  7:10 │ Relative velocity NED = target − drone  [m/s]      │
+    │ ī_p      │ 10:12 │ Normalised image coords [u/f, v/f]                 │
+    │ b_gyr    │ 12:15 │ Gyroscope bias in body-FRD  [rad/s]                │
+    │ b_acc    │ 15:18 │ Accelerometer bias in body-FRD  [m/s²]             │
+    └──────────┴───────┴────────────────────────────────────────────────────┘
+
+    Why 18-state over the previous 4-state model
+    ─────────────────────────────────────────────
+    • pzc (depth) is NO longer a fixed assumed constant — it is tracked as
+      the Z-component of p_r projected to the camera frame.  The 4-state
+      model fixed pzc=7 m which degraded the image Jacobian at range.
+    • Attitude is propagated via exact quaternion kinematics (q̇ = ½Ω(ω)q),
+      NOT through the linearised image Jacobian.  This eliminates the
+      break-down seen at ω_x ≈ 0.3–0.4 rad/s during intercept.
+    • Gyro and accelerometer biases are estimated online, reducing drift
+      in re-propagation during the D-step replay.
+    • Re-propagation stores the actual VehicleAcceleration reading so the
+      replay integrates real IMU, not a linearised approximation.
+
+    Jacobian note
+    ─────────────
+    F is computed numerically (forward-difference, ε=1 e-5, 18+1 calls to
+    _f per step).  This avoids the ~200-term analytical 18×18 derivation
+    and the off-by-one sign errors that often plague quaternion-rate
+    coupling expressions.  At 50 Hz prediction + 10 Hz measurement, the
+    overhead is acceptable in simulation.
+
+    delay_steps=0 → standard EKF (no re-propagation, no history).
+    delay_steps>0 → full DKF with history replay (Algorithm 2, Eq. 34-36).
     """
 
-    def __init__(self, foc, R_b_c, dt=0.02, assumed_depth=10.0):
-        self.foc = foc
-        self.R_b_c = R_b_c
-        self.R_c_b = R_b_c.T
-        self.dt = dt
-        self.pzc = assumed_depth
+    SQ    = slice(0, 4)    # quaternion  [qw qx qy qz]
+    SPR   = slice(4, 7)    # relative position NED [m]
+    SVR   = slice(7, 10)   # relative velocity NED [m/s]
+    SIP   = slice(10, 12)  # normalised image coords
+    SBGYR = slice(12, 15)  # gyro bias [rad/s]
+    SBACC = slice(15, 18)  # accel bias [m/s²]
+    N     = 18
 
-        self.x = np.zeros(4)
-        self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
-        self.Q = np.diag([1e-4, 1e-4, 1e-2, 1e-2])
-        self.R = np.diag([(5.0 / foc) ** 2] * 2)
-        self.P = np.eye(4) * 0.1
+    def __init__(self, foc, R_b_c, dt=0.02, delay_steps=10,
+                 assumed_depth=10.0, max_history=50, chi2_threshold=9.21):
+        # Reference: Yang et al. 2025, Section III-B filter design
+        self.foc            = foc
+        self.R_b_c          = R_b_c      # body-FRD → camera-optical
+        self.R_c_b          = R_b_c.T    # camera-optical → body-FRD
+        self.dt             = dt
+        self.D              = delay_steps
+        self.assumed_depth  = assumed_depth   # used ONLY at first-measurement init
+        self.chi2_threshold = chi2_threshold  # χ²(2 d.o.f., 99%) = 9.21
+
+        # NED gravity vector [m/s²] (down = positive in NED)
+        self.g_ned = np.array([0.0, 0.0, 9.81])
+
+        # Initial state: identity quaternion, all else zero
+        self.x = np.zeros(self.N)
+        self.x[0] = 1.0   # qw = 1
+
+        # Measurement matrix H: directly observe normalised image coords ī_p
+        # (Eq. 53 in Yang et al. — linear measurement model is the key advantage
+        #  of including ī_p as an explicit state)
+        self.H = np.zeros((2, self.N))
+        self.H[0, 10] = 1.0
+        self.H[1, 11] = 1.0
+
+        # Process noise Q — tuned per component
+        # q:    small (IMU-driven, model error is quaternion normalisation only)
+        # p_r:  small random walk (target moves slowly relative to prediction step)
+        # v_r:  larger (target manoeuvres + constant-velocity model error)
+        # ī_p:  medium (image Jacobian approximation residual)
+        # bgyr: very small (bias is nearly constant between calibrations)
+        # bacc: small (bias drift slower than signal)
+        self.Q = np.diag([
+            1e-5, 1e-5, 1e-5, 1e-5,   # q
+            1e-4, 1e-4, 1e-4,          # p_r
+            1e-2, 1e-2, 1e-2,          # v_r
+            1e-4, 1e-4,                # ī_p
+            1e-6, 1e-6, 1e-6,          # b_gyr
+            1e-4, 1e-4, 1e-4,          # b_acc
+        ])
+
+        # Measurement noise R: 5 pixel std-dev → normalised coords
+        px_noise = 5.0
+        self.R_meas = np.diag([(px_noise / foc) ** 2] * 2)
+
+        # Initial covariance
+        # p_r is highly uncertain (depth unknown), q is well-known from IMU
+        self.P = np.diag([
+            1e-4, 1e-4, 1e-4, 1e-4,   # q   — tight
+            100., 100., 100.,           # p_r — large: unknown range
+            1.0,  1.0,  1.0,           # v_r
+            1.0,  1.0,                 # ī_p — wide init; converges after first real update
+            1e-4, 1e-4, 1e-4,          # b_gyr
+            0.01, 0.01, 0.01,          # b_acc
+        ])
+
+        self.history     = collections.deque(maxlen=max_history)
         self.initialized = False
+        self._chi2_reject_count = 0    # consecutive chi2 gate rejections
 
-    def _imu_image_motion(self, px, py, omega_body, vel_ned, R_e_b):
+        # Cache last IMU input for get_pixel() velocity computation
+        self._last_omega = np.zeros(3)
+        self._last_accel = np.zeros(3)
+
+    # ── Quaternion / rotation utilities ──────────────────────
+
+    @staticmethod
+    def _q_to_R(q):
+        """
+        Unit quaternion [qw qx qy qz] → 3×3 rotation matrix R (NED ← body).
+        Standard formula: R_ij from quaternion components.
+        """
+        qw, qx, qy, qz = q
+        return np.array([
+            [1 - 2*(qy**2 + qz**2),  2*(qx*qy - qw*qz),    2*(qx*qz + qw*qy)],
+            [2*(qx*qy + qw*qz),      1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
+            [2*(qx*qz - qw*qy),      2*(qy*qz + qw*qx),    1 - 2*(qx**2 + qy**2)],
+        ])
+
+    @staticmethod
+    def _euler_to_q(roll, pitch, yaw):
+        """
+        Euler ZYX angles → quaternion [qw qx qy qz] (NED ← body).
+        Used only at filter initialisation to seed q from drone attitude.
+        """
+        cr, sr = math.cos(roll  / 2), math.sin(roll  / 2)
+        cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+        cy, sy = math.cos(yaw   / 2), math.sin(yaw   / 2)
+        return np.array([
+            cr*cp*cy + sr*sp*sy,
+            sr*cp*cy - cr*sp*sy,
+            cr*sp*cy + sr*cp*sy,
+            cr*cp*sy - sr*sp*cy,
+        ])
+
+    # ── Nonlinear propagation f(x, u) ────────────────────────
+
+    def _f(self, x, omega_imu, accel_imu):
+        """
+        One-step nonlinear state propagation: x_{k+1} = f(x_k, u_k).
+
+        omega_imu : body-FRD angular velocity [rad/s]  (VehicleAngularVelocity.xyz)
+        accel_imu : body-FRD specific force   [m/s²]   (VehicleAcceleration.xyz)
+                    "Bias corrected acceleration including gravity" = what the IMU
+                    physically measures = actual_accel_body − g_body.
+
+        Equations implemented
+        ─────────────────────
+        1. Quaternion kinematics (exact, no small-angle approx):
+               q_dot = ½ Ω(ω_c) q   where ω_c = ω_imu − b_gyr  (Eq. 28)
+        2. Relative position:
+               ṗ_r = v_r                                          (Eq. 29a)
+        3. Relative velocity (target stationary assumption):
+               v̇_r = −a_drone_ned                                (Eq. 29b)
+               a_drone_ned = R_e_b @ accel_c + g_ned
+               (accel_c = specific force; add g_ned to recover motion accel)
+        4. Image coord propagation via image Jacobian (Eq. 51),
+               now using pzc derived from state p_r instead of fixed constant.
+        5. Bias random walk: ḃ = 0  (modelled via Q)
+        """
         dt = self.dt
-        wc = self.R_c_b @ omega_body
-        vc = self.R_c_b @ (R_e_b.T @ vel_ned)
-        pz = self.pzc
+        q    = x[self.SQ].copy()
+        p_r  = x[self.SPR].copy()
+        v_r  = x[self.SVR].copy()
+        ip   = x[self.SIP].copy()
+        bgyr = x[self.SBGYR].copy()
+        bacc = x[self.SBACC].copy()
+
+        omega_c = omega_imu - bgyr   # bias-corrected gyro
+        accel_c = accel_imu - bacc   # bias-corrected accel (still includes gravity)
+
+        # 1. Quaternion kinematics: q_dot = ½ Ω(ω_c) q
+        #    Ω(ω) is the 4×4 skew matrix for quaternion left-multiplication
+        wx, wy, wz = omega_c
+        Omega = 0.5 * np.array([
+            [ 0,  -wx, -wy, -wz],
+            [ wx,   0,   wz, -wy],
+            [ wy,  -wz,   0,  wx],
+            [ wz,   wy,  -wx,  0],
+        ])
+        q_new = q + Omega @ q * dt
+        q_new /= (np.linalg.norm(q_new) + 1e-12)   # keep unit quaternion
+
+        # Current rotation matrix from pre-update q
+        R_e_b = self._q_to_R(q)
+
+        # 2. Relative position (kinematic: dp_r/dt = v_r)
+        p_r_new = p_r + v_r * dt
+
+        # 3. Relative velocity
+        #    accel_c = specific force (IMU output) = a_body − g_body
+        #    → actual NED accel: a_ned = R_e_b @ accel_c + g_ned
+        #    Ref: standard IMU mechanisation, e.g. Titterton & Weston Ch.3
+        a_drone_ned = R_e_b @ accel_c + self.g_ned
+        v_r_new = v_r - a_drone_ned * dt   # target stationary: a_rel = −a_drone
+
+        # 4. Image coordinate propagation (Eq. 51, Yang et al.)
+        #    KEY: pzc is now from the current state p_r, not a fixed constant.
+        #    Project p_r into the camera frame; take Z as depth.
+        p_c  = self.R_c_b @ (R_e_b.T @ p_r)
+        pzc  = max(abs(float(p_c[2])), 0.5)   # guard: min 0.5 m depth
+
+        wc = self.R_c_b @ omega_c             # angular velocity in camera frame
+        # Camera translational velocity ≈ drone velocity (target stationary)
+        # v_r = v_target − v_drone → v_drone ≈ −v_r
+        vc = self.R_c_b @ (R_e_b.T @ (-v_r))
+
+        px_n, py_n = float(ip[0]), float(ip[1])
         wxc, wyc, wzc = wc
         vxc, vyc, vzc = vc
-        dp_rot = np.array([
-            px * py * wxc - (1 + px**2) * wyc + py * wzc,
-            (1 + py**2) * wxc - px * py * wyc - px * wzc
-        ]) * dt
-        dp_trans = np.array([
-            -vxc / pz + px * vzc / pz,
-            -vyc / pz + py * vzc / pz
-        ]) * dt
-        return dp_rot + dp_trans, wc, vzc, pz
 
-    def _build_F(self, px, py, wc, vzc, pz):
-        dt = self.dt
-        wxc, wyc, wzc_val = wc
-        F_pp = np.eye(2) + np.array([
-            [vzc / pz + py * wxc - 2 * px * wyc, px * wxc + wzc_val],
-            [-py * wyc - wzc_val, vzc / pz + 2 * py * wxc - px * wyc]
+        # Rotation part of image Jacobian (Eq. 51, rotation interaction matrix)
+        dp_rot = np.array([
+            px_n*py_n*wxc - (1 + px_n**2)*wyc + py_n*wzc,
+            (1 + py_n**2)*wxc - px_n*py_n*wyc - px_n*wzc,
         ]) * dt
-        F = np.eye(4)
-        F[0:2, 0:2] = F_pp
-        F[0:2, 2:4] = np.eye(2) * dt
+
+        # Translation part of image Jacobian (Eq. 51, translation interaction matrix)
+        dp_trans = np.array([
+            -vxc/pzc + px_n*vzc/pzc,
+            -vyc/pzc + py_n*vzc/pzc,
+        ]) * dt
+
+        ip_new = ip + dp_rot + dp_trans
+
+        # 5. Biases: constant model (random walk captured in Q)
+        x_new = np.zeros(self.N)
+        x_new[self.SQ]    = q_new
+        x_new[self.SPR]   = p_r_new
+        x_new[self.SVR]   = v_r_new
+        x_new[self.SIP]   = ip_new
+        x_new[self.SBGYR] = bgyr
+        x_new[self.SBACC] = bacc
+        return x_new
+
+    def _numerical_F(self, x, omega_imu, accel_imu):
+        """
+        Numerical Jacobian F = ∂f/∂x  (forward differences, ε = 1e-5).
+
+        Called once per predict step and once per re-propagation step.
+        18+1 = 19 calls to _f per invocation.  Each column perturbs one
+        state dimension; quaternion column is re-normalised to stay on S³.
+
+        This replaces an analytical 18×18 derivation that would require
+        explicit expressions for ∂(R_e_b @ accel)/∂q and ∂(image Jacobian)/∂q,
+        which are prone to sign errors in the quaternion–rotation coupling.
+        Ref: numerical differentiation standard practice in EKF implementations,
+        e.g. Joan Solà "A micro Lie theory" (2018), Appendix D.
+        """
+        eps = 1e-5
+        f0  = self._f(x, omega_imu, accel_imu)
+        F   = np.zeros((self.N, self.N))
+        for i in range(self.N):
+            xp = x.copy()
+            xp[i] += eps
+            # Re-normalise quaternion after perturbation to remain on unit sphere
+            xp[self.SQ] /= (np.linalg.norm(xp[self.SQ]) + 1e-12)
+            F[:, i] = (self._f(xp, omega_imu, accel_imu) - f0) / eps
         return F
 
-    def predict(self, omega_body, vel_ned, R_e_b):
+    # ── EKF / DKF public interface ────────────────────────────
+
+    def predict(self, omega_body, accel_body, R_e_b=None):
+        """
+        Algorithm 2, line 4: IMU-driven state propagation.
+
+        omega_body : VehicleAngularVelocity.xyz  [rad/s]  body-FRD
+        accel_body : VehicleAcceleration.xyz     [m/s²]   body-FRD
+                     (bias-corrected specific force, gravity included)
+        R_e_b      : optional, not used in steady-state (q carries attitude)
+        """
         if not self.initialized:
             return
-        px, py = self.x[0], self.x[1]
-        dp, wc, vzc, pz = self._imu_image_motion(px, py, omega_body, vel_ned, R_e_b)
-        F = self._build_F(px, py, wc, vzc, pz)
 
-        self.x[0] += dp[0] + self.x[2] * self.dt
-        self.x[1] += dp[1] + self.x[3] * self.dt
+        self._last_omega = omega_body.copy()
+        self._last_accel = accel_body.copy()
+
+        # Save state BEFORE propagation so update() can retrieve x(t-D), P(t-D)
+        # History entry also stores IMU so re-propagation uses real measurements
+        self.history.append({
+            'x':     self.x.copy(),
+            'P':     self.P.copy(),
+            'omega': omega_body.copy(),
+            'accel': accel_body.copy(),
+        })
+
+        # EKF predict: linearise f around current x
+        F = self._numerical_F(self.x, omega_body, accel_body)
+
+        # Propagate state (nonlinear, no approximation)
+        self.x = self._f(self.x, omega_body, accel_body)
+
+        # Propagate covariance (Eq. 31: P = F P Fᵀ + Q)
         self.P = F @ self.P @ F.T + self.Q
 
-        self.x[0] = np.clip(self.x[0], -3.0, 3.0)
-        self.x[1] = np.clip(self.x[1], -3.0, 3.0)
-        self.x[2] = np.clip(self.x[2], -2.0, 2.0)
-        self.x[3] = np.clip(self.x[3], -2.0, 2.0)
-        if np.any(np.diag(self.P) > 10.0):
-            self.P = np.eye(4) * 0.1
+    def update(self, z_pixel, delay_steps=None, roll=0.0, pitch=0.0, yaw=0.0):
+        """
+        Algorithm 2, lines 5-9: delayed measurement correction.
 
-    def update(self, z_pixel, delay_steps=None):
-        """No delay compensation — treats delayed measurement as current."""
+        z_pixel     : raw pixel detection (u, v)
+        delay_steps : D = round((t_now − t_img) / dt) from ROS timestamps;
+                      None → fall back to self.D (fixed parameter)
+        roll/pitch/yaw : Euler angles used ONLY at first-call initialisation
+                         to seed the quaternion from current drone attitude.
+        """
         zb = np.array([z_pixel[0] / self.foc, z_pixel[1] / self.foc])
+
         if not self.initialized:
-            self.x[:2] = zb
-            self.x[2:] = 0
-            self.P = np.eye(4) * 0.01
-            self.initialized = True
+            self._initialize(zb, roll, pitch, yaw)
             return
-        S = self.H @ self.P @ self.H.T + self.R
+
+        D = int(delay_steps) if delay_steps is not None else self.D
+        D = max(0, min(D, self.D + 5))   # cap at D+5 to prevent runaway
+
+        if D == 0 or len(self.history) < D:
+            # Not enough history or EKF mode: standard single-step correction
+            self._std_correct(zb)
+            return
+
+        hl  = len(self.history)
+        idx = hl - D
+        xd  = self.history[idx]['x'].copy()   # state at capture time t-D
+        Pd  = self.history[idx]['P'].copy()   # covariance at t-D
+
+        # Innovation gating at t-D: χ²(2 d.o.f.) test
+        # Ref: Bar-Shalom et al. "Estimation with Applications" §5.4
+        innov = zb - self.H @ xd
+        S     = self.H @ Pd @ self.H.T + self.R_meas
+        d2    = float(innov @ np.linalg.solve(S, innov))
+        if d2 > self.chi2_threshold:
+            self._chi2_reject_count += 1
+            if self._chi2_reject_count >= 3:
+                self.initialized = False   # filter has diverged; re-init on next det
+            return   # statistical outlier — discard measurement
+        self._chi2_reject_count = 0
+
+        # Correct state at t-D (Eq. 34-36, Joseph form for numerical P.D.)
+        K   = Pd @ self.H.T @ np.linalg.inv(S)
+        xc  = xd + K @ innov
+        xc[self.SQ] /= (np.linalg.norm(xc[self.SQ]) + 1e-12)
+        IKH = np.eye(self.N) - K @ self.H
+        Pc  = IKH @ Pd @ IKH.T + K @ self.R_meas @ K.T
+
+        # Re-propagate from t-D to present using STORED IMU (Algorithm 2, line 8)
+        # Each step uses the actual omega/accel recorded at that instant,
+        # so the replay is physically faithful (no fixed-depth assumption).
+        for i in range(idx, hl):
+            h   = self.history[i]
+            F   = self._numerical_F(xc, h['omega'], h['accel'])
+            xc  = self._f(xc, h['omega'], h['accel'])
+            xc[self.SQ] /= (np.linalg.norm(xc[self.SQ]) + 1e-12)
+            Pc  = F @ Pc @ F.T + self.Q
+
+        self.x, self.P = xc, Pc
+
+    def _initialize(self, zb, roll, pitch, yaw):
+        """
+        Initialise state from first measurement.
+
+        q    ← drone attitude converted from Euler ZYX
+        p_r  ← target bearing × assumed_depth  (best guess at range)
+        v_r  ← 0  (unknown initial velocity)
+        ī_p  ← zb (measurement provides normalised image coords)
+        biases ← 0  (assume zero at startup)
+        """
+        # Quaternion from current drone Euler attitude
+        q0 = self._euler_to_q(roll, pitch, yaw)
+        self.x[self.SQ] = q0
+        R_e_b = self._q_to_R(q0)
+
+        # Target bearing in camera optical frame: direction = [u/f, v/f, 1]
+        # Scale by assumed_depth along the camera Z-axis to get initial p_r [NED]
+        # Ref: standard monocular depth initialisation with a range prior
+        bearing_cam  = np.array([zb[0], zb[1], 1.0])
+        bearing_body = self.R_b_c @ bearing_cam          # body frame
+        bearing_ned  = R_e_b @ bearing_body              # NED frame
+        # bearing_cam[2] = 1 → camera-Z component = 1 unit = assumed_depth m
+        self.x[self.SPR] = bearing_ned * self.assumed_depth
+
+        self.x[self.SVR]   = np.zeros(3)     # unknown velocity → 0
+        self.x[self.SIP]   = zb              # seed image state from measurement
+        self.x[self.SBGYR] = np.zeros(3)
+        self.x[self.SBACC] = np.zeros(3)
+
+        # Keep p_r large (depth truly unknown); ī_p wide so first real measurement
+        # can correct a false-positive init without being gated out by chi2
+        self.P = np.diag([
+            1e-4, 1e-4, 1e-4, 1e-4,   # q
+            100., 100., 100.,           # p_r  (±10 m uncertainty)
+            1.0,  1.0,  1.0,           # v_r
+            1.0,  1.0,                 # ī_p — wide; tightens quickly after real updates
+            1e-4, 1e-4, 1e-4,          # b_gyr
+            0.01, 0.01, 0.01,          # b_acc
+        ])
+
+        self._chi2_reject_count = 0
+        self.initialized = True
+
+    def _std_correct(self, zb):
+        """
+        Standard (D=0) EKF update: innovation gating + Joseph form.
+        Same statistical approach as the full DKF but without re-propagation.
+        """
+        innov = zb - self.H @ self.x
+        S     = self.H @ self.P @ self.H.T + self.R_meas
+        d2    = float(innov @ np.linalg.solve(S, innov))
+        if d2 > self.chi2_threshold:
+            self._chi2_reject_count += 1
+            if self._chi2_reject_count >= 3:
+                self.initialized = False   # filter has diverged; re-init on next det
+            return
+        self._chi2_reject_count = 0
         K = self.P @ self.H.T @ np.linalg.inv(S)
-        self.x += K @ (zb - self.H @ self.x)
-        self.P = (np.eye(4) - K @ self.H) @ self.P
+        self.x += K @ innov
+        self.x[self.SQ] /= (np.linalg.norm(self.x[self.SQ]) + 1e-12)
+        IKH = np.eye(self.N) - K @ self.H
+        self.P = IKH @ self.P @ IKH.T + K @ self.R_meas @ K.T
 
     def get_pixel(self):
+        """
+        Return [u, v, u_dot, v_dot] in pixel coords for the control loop.
+
+        u, v      : from ī_p state × foc
+        u_dot, v_dot : on-the-fly from image Jacobian using current state
+                       (p_r provides real depth; _last_omega/accel used)
+        """
         if not self.initialized:
             return None
-        return np.array([self.x[0] * self.foc, self.x[1] * self.foc,
-                         self.x[2] * self.foc, self.x[3] * self.foc])
+
+        ip   = self.x[self.SIP]
+        q    = self.x[self.SQ]
+        p_r  = self.x[self.SPR]
+        v_r  = self.x[self.SVR]
+        bgyr = self.x[self.SBGYR]
+
+        R_e_b = self._q_to_R(q)
+
+        # Depth from state (no longer a fixed assumption)
+        p_c  = self.R_c_b @ (R_e_b.T @ p_r)
+        pzc  = max(abs(float(p_c[2])), 0.5)
+
+        omega_c = self.R_c_b @ (self._last_omega - bgyr)
+        vc      = self.R_c_b @ (R_e_b.T @ (-v_r))
+
+        px_n, py_n = float(ip[0]), float(ip[1])
+        wxc, wyc, wzc = omega_c
+        vxc, vyc, vzc = vc
+
+        ip_dot = np.array([
+            px_n*py_n*wxc - (1 + px_n**2)*wyc + py_n*wzc
+            - vxc/pzc + px_n*vzc/pzc,
+            (1 + py_n**2)*wxc - px_n*py_n*wyc - px_n*wzc
+            - vyc/pzc + py_n*vzc/pzc,
+        ])
+
+        return np.array([
+            ip[0] * self.foc, ip[1] * self.foc,
+            ip_dot[0] * self.foc, ip_dot[1] * self.foc,
+        ])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -370,7 +764,7 @@ class InterceptionController(Node):
         # Filter parameters
         self.declare_parameter('dkf_dt', 0.02)
         self.declare_parameter('dkf_delay_steps', 10)  # 200ms / 20ms = 10 steps
-        self.declare_parameter('assumed_depth', 7.0)   # pzc for image Jacobian
+        self.declare_parameter('assumed_depth', 10.0)   # pzc for image Jacobian
 
         # Mission
         self.declare_parameter('mission_timeout', 60.0)
@@ -419,15 +813,28 @@ class InterceptionController(Node):
             self._gt_pixel = None       # [u, v, u_dot, v_dot]
             self._gt_prev_uv = None     # previous [u, v] for numerical diff
             self._gt_dt = dkf_dt        # 0.02s (50Hz)
+        elif self.filter_type == 'DKF18':
+            # Full 18-state DKF (Yang et al. 2025, Algorithm 2)
+            # Uses quaternion kinematics + VehicleAcceleration for re-propagation
+            self.filt = DelayedKalmanFilter18(
+                self.foc, self.R_b_c, dkf_dt, dkf_delay,
+                assumed_depth=assumed_depth, max_history=dkf_delay + 20
+            )
+        elif self.filter_type == 'EKF18':
+            # 18-state EKF (same class, delay_steps=0 disables re-propagation)
+            self.filt = DelayedKalmanFilter18(
+                self.foc, self.R_b_c, dkf_dt, delay_steps=0,
+                assumed_depth=assumed_depth, max_history=20
+            )
         elif self.filter_type == 'DKF':
             self.filt = DelayedKalmanFilter(
                 self.foc, self.R_b_c, dkf_dt, dkf_delay,
                 assumed_depth=assumed_depth, max_history=dkf_delay + 20
             )
-        else:
-            self.filt = SimpleEKF(
-                self.foc, self.R_b_c, dkf_dt,
-                assumed_depth=assumed_depth
+        else:  # EKF: same 4-state filter with delay_steps=0
+            self.filt = DelayedKalmanFilter(
+                self.foc, self.R_b_c, dkf_dt, delay_steps=0,
+                assumed_depth=assumed_depth, max_history=20
             )
 
         # ── State variables ──
@@ -438,6 +845,8 @@ class InterceptionController(Node):
         self.drone_pitch_val = 0.0
         self.drone_roll = 0.0
         self.drone_omega = np.zeros(3)
+        self.drone_accel = np.zeros(3)   # body-FRD specific force [m/s²] (VehicleAcceleration)
+        self._last_delay_steps = 0       # most recent measured delay D (for logger)
         self.nav_state = 0
         self.arming_state = 0
         self.last_cmd_time = 0.0
@@ -502,6 +911,12 @@ class InterceptionController(Node):
             VehicleAngularVelocity, f'{self.topic_prefix}out/vehicle_angular_velocity',
             self.avel_cb, qos_profile_sensor_data
         )
+        # VehicleAcceleration: body-FRD bias-corrected specific force (gravity included)
+        # Required by 18-state DKF for accurate IMU re-propagation
+        self.create_subscription(
+            VehicleAcceleration, f'{self.topic_prefix}out/vehicle_acceleration',
+            self.accel_cb, qos_profile_sensor_data
+        )
         self.create_subscription(
             Yolov8Inference, self.get_parameter('detection_topic').value,
             self.det_cb, 10
@@ -516,8 +931,12 @@ class InterceptionController(Node):
         self.get_logger().info('═══════════════════════════════════════')
         self.get_logger().info(f'  IBVS + PNG Interception Controller')
         self.get_logger().info(f'  Filter: *** {self.filter_type} ***')
+        if self.filter_type in ('DKF18', 'EKF18'):
+            self.get_logger().info(f'  Mode: 18-state (quaternion kinematics, depth from p_r)')
+        else:
+            self.get_logger().info(f'  Mode: 4-state (simplified image Jacobian)')
         self.get_logger().info(f'  Delay: {dkf_delay} steps ({dkf_delay * dkf_dt * 1000:.0f}ms)')
-        self.get_logger().info(f'  Depth: {assumed_depth}m')
+        self.get_logger().info(f'  Depth prior: {assumed_depth}m (18-state: init only)')
         self.get_logger().info(f'  PNG: Ky={self.Ky}, Kz={self.Kz}, ka={self.ka}')
         self.get_logger().info(f'  Yaw PD: kp={self.kp_yaw}, kd={self.kd_yaw}')
         self.get_logger().info(f'  Max speed: {self.max_speed} m/s')
@@ -541,6 +960,12 @@ class InterceptionController(Node):
     def avel_cb(self, msg: VehicleAngularVelocity):
         self.drone_omega = np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
 
+    def accel_cb(self, msg: VehicleAcceleration):
+        # VehicleAcceleration.xyz: bias-corrected specific force in body-FRD [m/s²]
+        # "Bias corrected acceleration (including gravity)" — as per .msg definition
+        # This is exactly what the 18-state filter expects for accel_body
+        self.drone_accel = np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
+
     def det_cb(self, msg: Yolov8Inference):
         if not msg.yolov8_inference:
             return
@@ -559,15 +984,21 @@ class InterceptionController(Node):
             self._gt_prev_uv = uv.copy()
             self._gt_pixel = np.array([u, v, duv[0], duv[1]])
         else:
-            # Compute actual delay from image header stamp vs. now
+            # Use fixed delay_steps from parameter (dynamic computation unreliable in sim
+            # due to /clock publish latency; actual delay ≈ 1 YOLO frame ≈ 2 control steps)
             delay_steps = None
-            if msg.header.stamp.sec > 0:
-                img_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-                now_sec = self.get_clock().now().nanoseconds * 1e-9
-                elapsed = now_sec - img_sec
-                if elapsed > 0:
-                    delay_steps = round(elapsed / self.filt.dt)
-            self.filt.update(np.array([u, v]), delay_steps=delay_steps)
+
+            if self.filter_type in ('DKF18', 'EKF18'):
+                # 18-state filter also needs Euler angles for first-call quaternion seed
+                self.filt.update(
+                    np.array([u, v]),
+                    delay_steps=delay_steps,
+                    roll=self.drone_roll,
+                    pitch=self.drone_pitch_val,
+                    yaw=self.drone_yaw,
+                )
+            else:
+                self.filt.update(np.array([u, v]), delay_steps=delay_steps)
 
         self.target_detected = True
         self.target_lost_count = 0
@@ -606,17 +1037,35 @@ class InterceptionController(Node):
             est = self._gt_pixel
         else:
             if self.filt.initialized and self.state in (State.SEARCH, State.INTERCEPT):
-                self.filt.predict(
-                    omega_body=self.drone_omega,
-                    vel_ned=self.drone_vel,
-                    R_e_b=R_e_b
-                )
+                if self.filter_type in ('DKF18', 'EKF18'):
+                    # 18-state: pass angular velocity + specific force
+                    # accel_body = VehicleAcceleration.xyz (bias-corrected, gravity included)
+                    self.filt.predict(
+                        omega_body=self.drone_omega,
+                        accel_body=self.drone_accel,
+                    )
+                else:
+                    # 4-state: original interface uses vel_ned + R_e_b
+                    self.filt.predict(
+                        omega_body=self.drone_omega,
+                        vel_ned=self.drone_vel,
+                        R_e_b=R_e_b
+                    )
             est = self.filt.get_pixel()
 
-        # Publish estimate for logger
+        # Publish estimate for logger — data: [u, v, u_dot, v_dot, delay_steps]
         if est is not None:
+            _F32 = 3.4028234e+38  # just under float32 max (3.4028234663852886e+38)
+            def _safe_f32(v):
+                try:
+                    f = float(v)
+                    return max(-_F32, min(_F32, f)) if math.isfinite(f) else 0.0
+                except Exception:
+                    return 0.0
             msg = Float32MultiArray()
-            msg.data = [float(est[0]), float(est[1]), float(est[2]), float(est[3])]
+            msg.data = [_safe_f32(est[0]), _safe_f32(est[1]),
+                        _safe_f32(est[2]), _safe_f32(est[3]),
+                        float(self._last_delay_steps)]
             self.est_pub.publish(msg)
 
         # Track target loss: _det_tick increments every control tick,
@@ -674,7 +1123,13 @@ class InterceptionController(Node):
     def _search(self):
         """Fly forward until target is detected."""
         filter_ready = (self._gt_pixel is not None) if self.filter_type == 'GT' else self.filt.initialized
-        if self.target_detected and filter_ready:
+        # Require pitch rate to be low before entering INTERCEPT.
+        # During the SEARCH yaw/pitch rotation omega_y can be ±3 rad/s; if we
+        # switch mid-rotation the filter's first predict step uses that large
+        # omega to push v_est far from the actual detection, causing a spurious
+        # ey=-200 upward IBVS+PNG command on the very first control tick.
+        pitch_stable = abs(self.drone_omega[1]) < 0.5   # rad/s
+        if self.target_detected and filter_ready and pitch_stable:
             self.get_logger().info(f'Target acquired ({self.filter_type}) -> INTERCEPT')
             self._init_png_state()
             self._mission_start_t = time.time()
@@ -722,6 +1177,8 @@ class InterceptionController(Node):
             self.target_detected = False
             self.prev_qy = None
             self._prev_cmd_vel = np.zeros(3)
+            if self.filt is not None:
+                self.filt.initialized = False  # prevent predict-only divergence
             self.state = State.SEARCH
             return
 
@@ -777,14 +1234,28 @@ class InterceptionController(Node):
             sigma_z = qz
 
         # ── PNG desired velocity angle (Eq. 9) ──
+        # Modified formula: sigma_yd = qy + Ky * dqy  (instead of prev_sigma + Ky*dqy)
+        #
+        # Why: the standard accumulation (prev_sigma + Ky*dqy) has two failure modes
+        # when INTERCEPT starts from hover (sigma ≈ 0):
+        #   1. Deadlock — if target is already below (qy < 0) but dqy ≈ 0,
+        #      sigma_yd = 0 + 0 = 0 → drone never descends.
+        #   2. Filter-convergence corruption — v_est jumps from init value to real
+        #      position in 2-3 steps, making dqy transiently large-positive, so
+        #      prev_sigma accumulates an upward command even though target is below.
+        # Using qy as the baseline anchors sigma_yd to the actual LOS angle,
+        # so even during filter transients the commanded direction stays downward.
         if self.prev_qy is not None:
             delta_qy = wrap_angle(qy - self.prev_qy)
             delta_qz = wrap_angle(qz - self.prev_qz)
-            sigma_yd = self.Ky * delta_qy + self.prev_sigma_y
-            sigma_zd = self.Kz * delta_qz + self.prev_sigma_z
+            sigma_yd = qy + self.Ky * delta_qy
+            sigma_zd = qz + self.Kz * delta_qz
         else:
-            sigma_yd = sigma_y
-            sigma_zd = sigma_z
+            # First INTERCEPT step: seed directly from LOS angle.
+            # sigma_y (velocity angle) ≈ 0 at hover — using it here would give a
+            # horizontal command even when the target is already below.
+            sigma_yd = qy
+            sigma_zd = qz
 
         self.prev_qy = qy
         self.prev_qz = qz

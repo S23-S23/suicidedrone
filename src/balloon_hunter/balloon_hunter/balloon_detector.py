@@ -114,7 +114,10 @@ class BalloonDetector(Node):
 
             # Process results
             yolov8_inference = Yolov8Inference()
+            # Re-stamp with publish time (not camera capture time) so drone_manager
+            # can compute pipeline delay as (now - stamp) correctly.
             yolov8_inference.header = msg.header
+            yolov8_inference.header.stamp = self.get_clock().now().to_msg()
 
             if results and len(results) > 0:
                 result = results[0]
