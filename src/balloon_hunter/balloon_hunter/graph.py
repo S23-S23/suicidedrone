@@ -356,10 +356,10 @@ def graph_summary(datasets, out):
             imp = (s1['mean_err'] - s0['mean_err']) / s1['mean_err'] * 100
             better = names[0] if imp > 0 else names[1]
             color = 'green' if imp > 0 else 'red'
-            ax.text(0.02, 0.95,
-                    f'{better} improvement: {abs(imp):.1f}% (Mean Error)',
-                    transform=ax.transAxes, fontsize=13, fontweight='bold',
-                    color=color, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            # ax.text(0.02, 0.95,
+            #         f'{better} improvement: {abs(imp):.1f}% (Mean Error)',
+            #         transform=ax.transAxes, fontsize=13, fontweight='bold',
+            #         color=color, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
     plt.tight_layout()
     plt.savefig(out, dpi=150, bbox_inches='tight')

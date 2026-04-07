@@ -48,7 +48,7 @@ class PNGGuidance(Node):
         # ── Parameters ─────────────────────────────────────────────────────
         self.declare_parameter('system_id', 1)
         self.declare_parameter('Ky', 3.0)
-        self.declare_parameter('Kz', 3.4)
+        self.declare_parameter('Kz', 3.0)
         self.declare_parameter('ka',    2.0)
         self.declare_parameter('v_max',  10.0)
         self.declare_parameter('v_init', 3.5)

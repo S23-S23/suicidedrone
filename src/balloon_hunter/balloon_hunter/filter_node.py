@@ -518,7 +518,7 @@ class FilterNode(Node):
         self.declare_parameter('cy', 240.0)
         self.declare_parameter('cam_pitch_deg', 0.0)
         self.declare_parameter('dkf_dt', 0.02)
-        self.declare_parameter('dkf_delay_steps', 10)
+        self.declare_parameter('dkf_delay_steps', 2)
         self.declare_parameter('assumed_depth', 10.0)
 
         self.system_id    = self.get_parameter('system_id').value
@@ -640,13 +640,16 @@ class FilterNode(Node):
         self.mission_state = msg.data
 
     def det_cb(self, msg: TargetInfo):
-        if self.mission_state not in ('SEARCH', 'INTERCEPT'):
+        active = self.mission_state in ('SEARCH', 'INTERCEPT')
+        if not active and self.mission_state != 'TAKEOFF':
             return
 
         u = (msg.left + msg.right) * 0.5
         v = (msg.top + msg.bottom) * 0.5
 
         if self.filter_type == 'GT':
+            if not active:
+                return
             uv = np.array([u, v])
             if self._gt_prev_uv is not None:
                 duv = (uv - self._gt_prev_uv) / self._gt_dt
@@ -670,12 +673,15 @@ class FilterNode(Node):
             self._predict_frozen = False
 
     def predict_and_publish(self):
-        if self.mission_state not in ('SEARCH', 'INTERCEPT'):
+        active = self.mission_state in ('SEARCH', 'INTERCEPT')
+        if not active and self.mission_state != 'TAKEOFF':
             return
 
         R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val) @ rot_x(self.drone_roll)
 
         if self.filter_type == 'GT':
+            if not active:
+                return
             est = self._gt_pixel
         else:
             # Freeze prediction when no measurement received for too long
@@ -698,7 +704,7 @@ class FilterNode(Node):
                     )
             est = self.filt.get_pixel()
 
-        if est is not None:
+        if est is not None and active:
             _F32 = 3.4028234e+38
             def _safe_f32(v):
                 try:
