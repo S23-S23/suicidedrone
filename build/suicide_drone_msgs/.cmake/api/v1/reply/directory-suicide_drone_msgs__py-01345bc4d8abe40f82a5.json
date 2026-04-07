@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "suicide_drone_msgs__py",
+		"source" : "/home/kiki/realsuicidedrone/build/suicide_drone_msgs/suicide_drone_msgs__py"
+	}
+}

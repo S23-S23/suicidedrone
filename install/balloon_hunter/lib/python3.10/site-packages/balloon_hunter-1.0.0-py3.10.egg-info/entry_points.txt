@@ -1,0 +1,9 @@
+[console_scripts]
+balloon_detector = balloon_hunter.balloon_detector:main
+drone_manager_real = balloon_hunter.drone_manager_real:main
+drone_visualizer_real = balloon_hunter.drone_visualizer_real:main
+filter_node = balloon_hunter.filter_node:main
+ibvs_controller = balloon_hunter.ibvs_controller:main
+logger = balloon_hunter.logger:main
+png_guidance = balloon_hunter.png_guidance:main
+

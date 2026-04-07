@@ -1,0 +1,13 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from px4_msgs/msg/GlobalPath.msg
+// generated code does not contain a copyright notice
+
+#include "px4_msgs/msg/TrajectorySetpoint.idl"
+
+module px4_msgs {
+  module msg {
+    struct GlobalPath {
+      sequence<px4_msgs::msg::TrajectorySetpoint> waypoints;
+    };
+  };
+};

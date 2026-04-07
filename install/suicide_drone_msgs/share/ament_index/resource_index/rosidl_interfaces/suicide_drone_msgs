@@ -1,0 +1,6 @@
+msg/GuidanceCmd.idl
+msg/GuidanceCmd.msg
+msg/IBVSOutput.idl
+msg/IBVSOutput.msg
+msg/TargetInfo.idl
+msg/TargetInfo.msg

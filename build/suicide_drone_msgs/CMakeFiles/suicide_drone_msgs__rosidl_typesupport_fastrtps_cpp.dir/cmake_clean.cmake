@@ -1,0 +1,21 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/guidance_cmd__type_support.cpp.o"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/guidance_cmd__type_support.cpp.o.d"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/ibvs_output__type_support.cpp.o"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/ibvs_output__type_support.cpp.o.d"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/target_info__type_support.cpp.o"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/target_info__type_support.cpp.o.d"
+  "libsuicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.pdb"
+  "libsuicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.so"
+  "rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/guidance_cmd__type_support.cpp"
+  "rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/ibvs_output__type_support.cpp"
+  "rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/dds_fastrtps/target_info__type_support.cpp"
+  "rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/guidance_cmd__rosidl_typesupport_fastrtps_cpp.hpp"
+  "rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/ibvs_output__rosidl_typesupport_fastrtps_cpp.hpp"
+  "rosidl_typesupport_fastrtps_cpp/suicide_drone_msgs/msg/detail/target_info__rosidl_typesupport_fastrtps_cpp.hpp"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/suicide_drone_msgs__rosidl_typesupport_fastrtps_cpp.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

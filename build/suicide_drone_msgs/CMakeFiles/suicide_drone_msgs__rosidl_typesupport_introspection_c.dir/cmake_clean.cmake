@@ -1,0 +1,21 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/guidance_cmd__type_support.c.o"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/guidance_cmd__type_support.c.o.d"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/ibvs_output__type_support.c.o"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/ibvs_output__type_support.c.o.d"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/target_info__type_support.c.o"
+  "CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/target_info__type_support.c.o.d"
+  "libsuicide_drone_msgs__rosidl_typesupport_introspection_c.pdb"
+  "libsuicide_drone_msgs__rosidl_typesupport_introspection_c.so"
+  "rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/guidance_cmd__rosidl_typesupport_introspection_c.h"
+  "rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/guidance_cmd__type_support.c"
+  "rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/ibvs_output__rosidl_typesupport_introspection_c.h"
+  "rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/ibvs_output__type_support.c"
+  "rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/target_info__rosidl_typesupport_introspection_c.h"
+  "rosidl_typesupport_introspection_c/suicide_drone_msgs/msg/detail/target_info__type_support.c"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang C)
+  include(CMakeFiles/suicide_drone_msgs__rosidl_typesupport_introspection_c.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

@@ -1,0 +1,8 @@
+{
+  "package_name": "suicide_drone_msgs",
+  "non_idl_tuples": [
+    "/home/kiki/realsuicidedrone/src/suicide_drone_msgs:msg/TargetInfo.msg",
+    "/home/kiki/realsuicidedrone/src/suicide_drone_msgs:msg/IBVSOutput.msg",
+    "/home/kiki/realsuicidedrone/src/suicide_drone_msgs:msg/GuidanceCmd.msg"
+  ]
+}

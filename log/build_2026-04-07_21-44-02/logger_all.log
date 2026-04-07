@@ -1,0 +1,282 @@
+[0.087s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build']
+[0.087s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=False, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=12, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=None, packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, allow_overriding=[], cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, mixin_files=None, mixin=None, verb_parser=<colcon_mixin.mixin.mixin_argument.MixinArgumentDecorator object at 0x73ab92b71ae0>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0x73ab92b71510>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0x73ab92b71510>>, mixin_verb=('build',))
+[0.224s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.225s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.225s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.225s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.225s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.225s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.225s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/home/kiki/realsuicidedrone'
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.225s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['cmake', 'python']
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'cmake'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['python_setup_py']
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python_setup_py'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extensions ['ignore', 'ignore_ament_install']
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extension 'ignore'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(build) ignored
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extensions ['ignore', 'ignore_ament_install']
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extension 'ignore'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(install) ignored
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extensions ['ignore', 'ignore_ament_install']
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extension 'ignore'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(log) ignored
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extensions ['ignore', 'ignore_ament_install']
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'ignore'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'ignore_ament_install'
+[0.233s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extensions ['colcon_pkg']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'colcon_pkg'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extensions ['colcon_meta']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'colcon_meta'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extensions ['ros']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'ros'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extensions ['cmake', 'python']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'cmake'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'python'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extensions ['python_setup_py']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src) by extension 'python_setup_py'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extensions ['ignore', 'ignore_ament_install']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extension 'ignore'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extension 'ignore_ament_install'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extensions ['colcon_pkg']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extension 'colcon_pkg'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extensions ['colcon_meta']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extension 'colcon_meta'
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extensions ['ros']
+[0.234s] Level 1:colcon.colcon_core.package_identification:_identify(src/balloon_hunter) by extension 'ros'
+[0.236s] DEBUG:colcon.colcon_core.package_identification:Package 'src/balloon_hunter' with type 'ros.ament_python' and name 'balloon_hunter'
+[0.236s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extensions ['ignore', 'ignore_ament_install']
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extension 'ignore'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extension 'ignore_ament_install'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extensions ['colcon_pkg']
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extension 'colcon_pkg'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extensions ['colcon_meta']
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extension 'colcon_meta'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extensions ['ros']
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/px4_msgs) by extension 'ros'
+[0.237s] DEBUG:colcon.colcon_core.package_identification:Package 'src/px4_msgs' with type 'ros.ament_cmake' and name 'px4_msgs'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extensions ['ignore', 'ignore_ament_install']
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extension 'ignore'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extension 'ignore_ament_install'
+[0.237s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extensions ['colcon_pkg']
+[0.238s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extension 'colcon_pkg'
+[0.238s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extensions ['colcon_meta']
+[0.238s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extension 'colcon_meta'
+[0.238s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extensions ['ros']
+[0.238s] Level 1:colcon.colcon_core.package_identification:_identify(src/suicide_drone_msgs) by extension 'ros'
+[0.238s] DEBUG:colcon.colcon_core.package_identification:Package 'src/suicide_drone_msgs' with type 'ros.ament_cmake' and name 'suicide_drone_msgs'
+[0.238s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.238s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.238s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.238s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.238s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[0.259s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) check parameters
+[0.259s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) discover
+[0.260s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 220 installed packages in /opt/ros/humble
+[0.261s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) using defaults
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'cmake_target' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'cmake_clean_cache' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'cmake_clean_first' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'cmake_force_configure' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'ament_cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'catkin_cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'px4_msgs' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.281s] DEBUG:colcon.colcon_core.verb:Building package 'px4_msgs' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/kiki/realsuicidedrone/build/px4_msgs', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/kiki/realsuicidedrone/install/px4_msgs', 'merge_install': False, 'path': '/home/kiki/realsuicidedrone/src/px4_msgs', 'symlink_install': False, 'test_result_base': None}
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'cmake_target' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'cmake_clean_cache' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'cmake_clean_first' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'cmake_force_configure' from command line to 'False'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'ament_cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'catkin_cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'suicide_drone_msgs' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.281s] DEBUG:colcon.colcon_core.verb:Building package 'suicide_drone_msgs' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/kiki/realsuicidedrone/build/suicide_drone_msgs', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/kiki/realsuicidedrone/install/suicide_drone_msgs', 'merge_install': False, 'path': '/home/kiki/realsuicidedrone/src/suicide_drone_msgs', 'symlink_install': False, 'test_result_base': None}
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'cmake_args' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'cmake_target' from command line to 'None'
+[0.281s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.282s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'cmake_clean_cache' from command line to 'False'
+[0.282s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'cmake_clean_first' from command line to 'False'
+[0.282s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'cmake_force_configure' from command line to 'False'
+[0.282s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'ament_cmake_args' from command line to 'None'
+[0.282s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'catkin_cmake_args' from command line to 'None'
+[0.282s] Level 5:colcon.colcon_core.verb:set package 'balloon_hunter' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.282s] DEBUG:colcon.colcon_core.verb:Building package 'balloon_hunter' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/kiki/realsuicidedrone/build/balloon_hunter', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/kiki/realsuicidedrone/install/balloon_hunter', 'merge_install': False, 'path': '/home/kiki/realsuicidedrone/src/balloon_hunter', 'symlink_install': False, 'test_result_base': None}
+[0.282s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[0.282s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[0.282s] INFO:colcon.colcon_ros.task.ament_cmake.build:Building ROS package in '/home/kiki/realsuicidedrone/src/px4_msgs' with build type 'ament_cmake'
+[0.283s] INFO:colcon.colcon_cmake.task.cmake.build:Building CMake package in '/home/kiki/realsuicidedrone/src/px4_msgs'
+[0.284s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.284s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.284s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[0.286s] INFO:colcon.colcon_ros.task.ament_cmake.build:Building ROS package in '/home/kiki/realsuicidedrone/src/suicide_drone_msgs' with build type 'ament_cmake'
+[0.286s] INFO:colcon.colcon_cmake.task.cmake.build:Building CMake package in '/home/kiki/realsuicidedrone/src/suicide_drone_msgs'
+[0.286s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.286s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[0.290s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/build/px4_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/kiki/realsuicidedrone/src/px4_msgs -DCMAKE_INSTALL_PREFIX=/home/kiki/realsuicidedrone/install/px4_msgs
+[0.291s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/kiki/realsuicidedrone/src/suicide_drone_msgs -DCMAKE_INSTALL_PREFIX=/home/kiki/realsuicidedrone/install/suicide_drone_msgs
+[1.564s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/kiki/realsuicidedrone/src/suicide_drone_msgs -DCMAKE_INSTALL_PREFIX=/home/kiki/realsuicidedrone/install/suicide_drone_msgs
+[1.565s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/kiki/realsuicidedrone/build/suicide_drone_msgs -- -j12 -l12
+[3.001s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/build/px4_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/kiki/realsuicidedrone/src/px4_msgs -DCMAKE_INSTALL_PREFIX=/home/kiki/realsuicidedrone/install/px4_msgs
+[3.002s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/build/px4_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/kiki/realsuicidedrone/build/px4_msgs -- -j12 -l12
+[3.751s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/kiki/realsuicidedrone/build/suicide_drone_msgs -- -j12 -l12
+[3.759s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/kiki/realsuicidedrone/build/suicide_drone_msgs
+[3.815s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(suicide_drone_msgs)
+[3.815s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/kiki/realsuicidedrone/build/suicide_drone_msgs
+[3.818s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs' for CMake module files
+[3.819s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs' for CMake config files
+[3.819s] Level 1:colcon.colcon_core.shell:create_environment_hook('suicide_drone_msgs', 'cmake_prefix_path')
+[3.819s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/cmake_prefix_path.ps1'
+[3.820s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/cmake_prefix_path.dsv'
+[3.820s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/cmake_prefix_path.sh'
+[3.821s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib'
+[3.821s] Level 1:colcon.colcon_core.shell:create_environment_hook('suicide_drone_msgs', 'ld_library_path_lib')
+[3.821s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/ld_library_path_lib.ps1'
+[3.822s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/ld_library_path_lib.dsv'
+[3.822s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/ld_library_path_lib.sh'
+[3.822s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/bin'
+[3.822s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib/pkgconfig/suicide_drone_msgs.pc'
+[3.823s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib/python3.10/site-packages'
+[3.823s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/bin'
+[3.823s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.ps1'
+[3.824s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.dsv'
+[3.825s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.sh'
+[3.825s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.bash'
+[3.826s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.zsh'
+[3.827s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/colcon-core/packages/suicide_drone_msgs)
+[3.827s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(suicide_drone_msgs)
+[3.828s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs' for CMake module files
+[3.828s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs' for CMake config files
+[3.828s] Level 1:colcon.colcon_core.shell:create_environment_hook('suicide_drone_msgs', 'cmake_prefix_path')
+[3.829s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/cmake_prefix_path.ps1'
+[3.829s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/cmake_prefix_path.dsv'
+[3.829s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/cmake_prefix_path.sh'
+[3.830s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib'
+[3.830s] Level 1:colcon.colcon_core.shell:create_environment_hook('suicide_drone_msgs', 'ld_library_path_lib')
+[3.830s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/ld_library_path_lib.ps1'
+[3.830s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/ld_library_path_lib.dsv'
+[3.831s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/hook/ld_library_path_lib.sh'
+[3.831s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/bin'
+[3.831s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib/pkgconfig/suicide_drone_msgs.pc'
+[3.832s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib/python3.10/site-packages'
+[3.832s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/bin'
+[3.832s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.ps1'
+[3.833s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.dsv'
+[3.833s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.sh'
+[3.834s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.bash'
+[3.834s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/suicide_drone_msgs/package.zsh'
+[3.834s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/kiki/realsuicidedrone/install/suicide_drone_msgs/share/colcon-core/packages/suicide_drone_msgs)
+[125.854s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/build/px4_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/kiki/realsuicidedrone/build/px4_msgs -- -j12 -l12
+[125.855s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/build/px4_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/kiki/realsuicidedrone/build/px4_msgs
+[126.751s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(px4_msgs)
+[126.752s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs' for CMake module files
+[126.752s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/build/px4_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/kiki/realsuicidedrone/build/px4_msgs
+[126.753s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs' for CMake config files
+[126.753s] Level 1:colcon.colcon_core.shell:create_environment_hook('px4_msgs', 'cmake_prefix_path')
+[126.753s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/cmake_prefix_path.ps1'
+[126.753s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/cmake_prefix_path.dsv'
+[126.754s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/cmake_prefix_path.sh'
+[126.754s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/lib'
+[126.754s] Level 1:colcon.colcon_core.shell:create_environment_hook('px4_msgs', 'ld_library_path_lib')
+[126.754s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/ld_library_path_lib.ps1'
+[126.754s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/ld_library_path_lib.dsv'
+[126.755s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/ld_library_path_lib.sh'
+[126.755s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/bin'
+[126.755s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/lib/pkgconfig/px4_msgs.pc'
+[126.755s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/lib/python3.10/site-packages'
+[126.755s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/bin'
+[126.756s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.ps1'
+[126.756s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.dsv'
+[126.756s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.sh'
+[126.756s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.bash'
+[126.757s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.zsh'
+[126.757s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/kiki/realsuicidedrone/install/px4_msgs/share/colcon-core/packages/px4_msgs)
+[126.757s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(px4_msgs)
+[126.757s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs' for CMake module files
+[126.758s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs' for CMake config files
+[126.758s] Level 1:colcon.colcon_core.shell:create_environment_hook('px4_msgs', 'cmake_prefix_path')
+[126.758s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/cmake_prefix_path.ps1'
+[126.758s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/cmake_prefix_path.dsv'
+[126.759s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/cmake_prefix_path.sh'
+[126.759s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/lib'
+[126.759s] Level 1:colcon.colcon_core.shell:create_environment_hook('px4_msgs', 'ld_library_path_lib')
+[126.759s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/ld_library_path_lib.ps1'
+[126.759s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/ld_library_path_lib.dsv'
+[126.760s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/hook/ld_library_path_lib.sh'
+[126.760s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/bin'
+[126.760s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/lib/pkgconfig/px4_msgs.pc'
+[126.760s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/lib/python3.10/site-packages'
+[126.760s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/px4_msgs/bin'
+[126.761s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.ps1'
+[126.761s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.dsv'
+[126.764s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.sh'
+[126.764s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.bash'
+[126.764s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/px4_msgs/share/px4_msgs/package.zsh'
+[126.765s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/kiki/realsuicidedrone/install/px4_msgs/share/colcon-core/packages/px4_msgs)
+[126.765s] INFO:colcon.colcon_ros.task.ament_python.build:Building ROS package in '/home/kiki/realsuicidedrone/src/balloon_hunter' with build type 'ament_python'
+[126.765s] Level 1:colcon.colcon_core.shell:create_environment_hook('balloon_hunter', 'ament_prefix_path')
+[126.765s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/ament_prefix_path.ps1'
+[126.766s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/ament_prefix_path.dsv'
+[126.766s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/ament_prefix_path.sh'
+[126.766s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[126.766s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[126.958s] INFO:colcon.colcon_core.task.python.build:Building Python package in '/home/kiki/realsuicidedrone/src/balloon_hunter'
+[126.958s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[126.959s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[127.202s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/kiki/realsuicidedrone/src/balloon_hunter': AMENT_PREFIX_PATH=/home/kiki/realsuicidedrone/install/suicide_drone_msgs:/home/kiki/realsuicidedrone/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/kiki/realsuicidedrone/install/suicide_drone_msgs:/home/kiki/realsuicidedrone/install/px4_msgs LD_LIBRARY_PATH=/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib:/home/kiki/realsuicidedrone/install/px4_msgs/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/kiki/realsuicidedrone/build/balloon_hunter/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/kiki/realsuicidedrone/install/balloon_hunter/lib/python3.10/site-packages:/home/kiki/realsuicidedrone/install/suicide_drone_msgs/local/lib/python3.10/dist-packages:/home/kiki/realsuicidedrone/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/balloon_hunter build --build-base /home/kiki/realsuicidedrone/build/balloon_hunter/build install --record /home/kiki/realsuicidedrone/build/balloon_hunter/install.log --single-version-externally-managed install_data
+[127.418s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter' for CMake module files
+[127.419s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/kiki/realsuicidedrone/src/balloon_hunter' returned '0': AMENT_PREFIX_PATH=/home/kiki/realsuicidedrone/install/suicide_drone_msgs:/home/kiki/realsuicidedrone/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/kiki/realsuicidedrone/install/suicide_drone_msgs:/home/kiki/realsuicidedrone/install/px4_msgs LD_LIBRARY_PATH=/home/kiki/realsuicidedrone/install/suicide_drone_msgs/lib:/home/kiki/realsuicidedrone/install/px4_msgs/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/kiki/realsuicidedrone/build/balloon_hunter/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/kiki/realsuicidedrone/install/balloon_hunter/lib/python3.10/site-packages:/home/kiki/realsuicidedrone/install/suicide_drone_msgs/local/lib/python3.10/dist-packages:/home/kiki/realsuicidedrone/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/balloon_hunter build --build-base /home/kiki/realsuicidedrone/build/balloon_hunter/build install --record /home/kiki/realsuicidedrone/build/balloon_hunter/install.log --single-version-externally-managed install_data
+[127.419s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter' for CMake config files
+[127.419s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter/lib'
+[127.419s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter/bin'
+[127.419s] Level 1:colcon.colcon_core.shell:create_environment_hook('balloon_hunter', 'path')
+[127.420s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/path.ps1'
+[127.420s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/path.dsv'
+[127.420s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/path.sh'
+[127.420s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter/lib/pkgconfig/balloon_hunter.pc'
+[127.421s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter/lib/python3.10/site-packages'
+[127.421s] Level 1:colcon.colcon_core.shell:create_environment_hook('balloon_hunter', 'pythonpath')
+[127.421s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/pythonpath.ps1'
+[127.421s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/pythonpath.dsv'
+[127.421s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/pythonpath.sh'
+[127.422s] Level 1:colcon.colcon_core.environment:checking '/home/kiki/realsuicidedrone/install/balloon_hunter/bin'
+[127.422s] Level 1:colcon.colcon_core.shell:create_environment_hook('balloon_hunter', 'pythonscriptspath')
+[127.422s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/pythonscriptspath.ps1'
+[127.422s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/pythonscriptspath.dsv'
+[127.422s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/hook/pythonscriptspath.sh'
+[127.422s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(balloon_hunter)
+[127.423s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/package.ps1'
+[127.423s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/package.dsv'
+[127.423s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/package.sh'
+[127.424s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/package.bash'
+[127.424s] INFO:colcon.colcon_core.shell:Creating package script '/home/kiki/realsuicidedrone/install/balloon_hunter/share/balloon_hunter/package.zsh'
+[127.424s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/kiki/realsuicidedrone/install/balloon_hunter/share/colcon-core/packages/balloon_hunter)
+[127.424s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[127.425s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[127.425s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '0'
+[127.425s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[127.428s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[127.428s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[127.428s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[127.436s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[127.436s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/kiki/realsuicidedrone/install/local_setup.ps1'
+[127.436s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/kiki/realsuicidedrone/install/_local_setup_util_ps1.py'
+[127.437s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/kiki/realsuicidedrone/install/setup.ps1'
+[127.438s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/kiki/realsuicidedrone/install/local_setup.sh'
+[127.438s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/kiki/realsuicidedrone/install/_local_setup_util_sh.py'
+[127.439s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/kiki/realsuicidedrone/install/setup.sh'
+[127.439s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/kiki/realsuicidedrone/install/local_setup.bash'
+[127.439s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/kiki/realsuicidedrone/install/setup.bash'
+[127.440s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/kiki/realsuicidedrone/install/local_setup.zsh'
+[127.440s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/kiki/realsuicidedrone/install/setup.zsh'

@@ -1,0 +1,104 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from px4_msgs/msg/F9pRtk.msg
+// generated code does not contain a copyright notice
+
+
+module px4_msgs {
+  module msg {
+    module F9pRtk_Constants {
+      @verbatim (language="comment", text=
+        "age_corr state" "\n"        "Not available")
+      const uint8 AGE_CORR_UNAVAILABLE = 0;
+      @verbatim (language="comment", text=
+        "Age between 0 and 1 second")
+      const uint8 AGE_CORR_0_TO_1_SEC = 1;
+      @verbatim (language="comment", text=
+        "Age between 1 (inclusive) and 2 seconds")
+      const uint8 AGE_CORR_1_TO_2_SEC = 2;
+      @verbatim (language="comment", text=
+        "Age between 2 (inclusive) and 5 seconds")
+      const uint8 AGE_CORR_2_TO_5_SEC = 3;
+      @verbatim (language="comment", text=
+        "Age between 5 (inclusive) and 10 seconds")
+      const uint8 AGE_CORR_5_TO_10_SEC = 4;
+      @verbatim (language="comment", text=
+        "Age between 10 (inclusive) and 15 seconds")
+      const uint8 AGE_CORR_10_TO_15_SEC = 5;
+      @verbatim (language="comment", text=
+        "Age between 15 (inclusive) and 20 seconds")
+      const uint8 AGE_CORR_15_TO_20_SEC = 6;
+      @verbatim (language="comment", text=
+        "Age between 20 (inclusive) and 30 seconds")
+      const uint8 AGE_CORR_20_TO_30_SEC = 7;
+      @verbatim (language="comment", text=
+        "Age between 30 (inclusive) and 45 seconds")
+      const uint8 AGE_CORR_30_TO_45_SEC = 8;
+      @verbatim (language="comment", text=
+        "Age between 45 (inclusive) and 60 seconds")
+      const uint8 AGE_CORR_45_TO_60_SEC = 9;
+    };
+    @verbatim (language="comment", text=
+      "f9p_rtk")
+    struct F9pRtk {
+      @verbatim (language="comment", text=
+        "time since system start (microseconds)")
+      uint64 timestamp;
+
+      @verbatim (language="comment", text=
+        "unique device ID for the sensor that does not change between power cycles")
+      uint32 device_id;
+
+      @verbatim (language="comment", text=
+        "GPS Time of Week (ms)")
+      uint32 tow;
+
+      @verbatim (language="comment", text=
+        "Age of the most recently received differential correction")
+      uint8 age_corr;
+
+      @verbatim (language="comment", text=
+        "flag (0-1: no fix, 2: 2D fix, 3: 3D fix, 4: DGPS, 5: Float RTK, 6: Fixed RTK)")
+      uint8 fix_type;
+
+      @verbatim (language="comment", text=
+        "Number of satellites used in Nav Solution")
+      uint8 satellites_used;
+
+      @verbatim (language="comment", text=
+        "Baseline North coordinate (cm)")
+      float n;
+
+      @verbatim (language="comment", text=
+        "Baseline East coordinate (cm)")
+      float e;
+
+      @verbatim (language="comment", text=
+        "Baseline Down coordinate (cm)")
+      float d;
+
+      @verbatim (language="comment", text=
+        "Velocity of Baseline North coordinate (m/s)")
+      float v_n;
+
+      @verbatim (language="comment", text=
+        "Velocity of Baseline East coordinate (m/s)")
+      float v_e;
+
+      @verbatim (language="comment", text=
+        "Velocity of Baseline Down coordinate (m/s)")
+      float v_d;
+
+      @verbatim (language="comment", text=
+        "Accuracy of relative position North component (mm)")
+      float acc_n;
+
+      @verbatim (language="comment", text=
+        "Accuracy of relative position East component (mm)")
+      float acc_e;
+
+      @verbatim (language="comment", text=
+        "Accuracy of relative position Down component (mm)")
+      float acc_d;
+    };
+  };
+};
