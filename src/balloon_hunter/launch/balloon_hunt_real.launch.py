@@ -231,7 +231,7 @@ def launch_setup(context, *args, **kwargs):
             filter_node,
             drone_manager_node,
             logger_node,
-            drone_visualizer_node,
+            #drone_visualizer_node,
         ],
     )
 
