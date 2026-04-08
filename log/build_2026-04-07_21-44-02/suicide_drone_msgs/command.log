@@ -1,6 +1,0 @@
-Invoking command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/kiki/realsuicidedrone/src/suicide_drone_msgs -DCMAKE_INSTALL_PREFIX=/home/kiki/realsuicidedrone/install/suicide_drone_msgs
-Invoked command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/kiki/realsuicidedrone/src/suicide_drone_msgs -DCMAKE_INSTALL_PREFIX=/home/kiki/realsuicidedrone/install/suicide_drone_msgs
-Invoking command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/kiki/realsuicidedrone/build/suicide_drone_msgs -- -j12 -l12
-Invoked command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/kiki/realsuicidedrone/build/suicide_drone_msgs -- -j12 -l12
-Invoking command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/kiki/realsuicidedrone/build/suicide_drone_msgs
-Invoked command in '/home/kiki/realsuicidedrone/build/suicide_drone_msgs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/kiki/realsuicidedrone/build/suicide_drone_msgs

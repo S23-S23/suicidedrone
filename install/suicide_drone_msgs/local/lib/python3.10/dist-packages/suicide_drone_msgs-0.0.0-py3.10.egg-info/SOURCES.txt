@@ -1,6 +1,0 @@
-setup.py
-suicide_drone_msgs/__init__.py
-suicide_drone_msgs.egg-info/PKG-INFO
-suicide_drone_msgs.egg-info/SOURCES.txt
-suicide_drone_msgs.egg-info/dependency_links.txt
-suicide_drone_msgs.egg-info/top_level.txt

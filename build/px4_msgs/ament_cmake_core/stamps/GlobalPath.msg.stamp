@@ -1,1 +1,0 @@
-TrajectorySetpoint[] waypoints
