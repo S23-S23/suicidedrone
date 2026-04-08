@@ -23,6 +23,7 @@ Usage:
   ros2 launch balloon_hunter balloon_hunt_real.launch.py filter_type:=EKF v_max:=8.0
 """
 import os
+from datetime import datetime
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration
@@ -190,10 +191,40 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
+    # ── 9. Rosbag Record ──
+    bag_dir = os.path.expanduser('~/dkf_logs')
+    bag_name = f'rosbag_{datetime.now().strftime("%Y%m%d_%H%M%S")}_drone{system_id}'
+    rosbag_record = ExecuteProcess(
+        cmd=[
+            'ros2', 'bag', 'record',
+            '-o', os.path.join(bag_dir, bag_name),
+            # 이미지
+            camera_topic,
+            f'/inference_result_{system_id}',
+            # 감지 / 필터 / 제어
+            '/target_info',
+            '/filter_estimate',
+            '/ibvs/output',
+            '/png/guidance_cmd',
+            '/mission_state',
+            # PX4 출력
+            f'drone{system_id}/fmu/out/monitoring',
+            f'drone{system_id}/fmu/out/vehicle_local_position',
+            f'drone{system_id}/fmu/out/vehicle_angular_velocity',
+            f'drone{system_id}/fmu/out/vehicle_attitude',
+            f'drone{system_id}/fmu/out/vehicle_status',
+            # PX4 입력
+            f'drone{system_id}/fmu/in/trajectory_setpoint',
+            f'drone{system_id}/fmu/in/offboard_control_mode',
+        ],
+        output='screen',
+    )
+
     # Start mission nodes after a short delay for XRCE to initialize
     mission_nodes = TimerAction(
         period=3.0,
         actions=[
+            rosbag_record,
             balloon_detector_node,
             ibvs_controller_node,
             png_guidance_node,
@@ -245,9 +276,9 @@ def generate_launch_description():
         DeclareLaunchArgument('Ky', default_value='3.0'),
         DeclareLaunchArgument('Kz', default_value='3.0'),
         DeclareLaunchArgument('ka', default_value='2.0'),
-        DeclareLaunchArgument('v_max', default_value='10.0',
+        DeclareLaunchArgument('v_max', default_value='3.0',
                               description='Max intercept speed [m/s]'),
-        DeclareLaunchArgument('v_init', default_value='3.5',
+        DeclareLaunchArgument('v_init', default_value='1.5',
                               description='Initial intercept speed [m/s]'),
         DeclareLaunchArgument('rate', default_value='50.0',
                               description='Guidance loop rate [Hz]'),
@@ -257,7 +288,7 @@ def generate_launch_description():
                               description='Hover time for filter initialization [s]'),
 
         # ── Filter ──
-        DeclareLaunchArgument('filter_type', default_value='DKF',
+        DeclareLaunchArgument('filter_type', default_value='DKF18',
                               description='Filter: DKF, EKF, DKF18, EKF18'),
 
         OpaqueFunction(function=launch_setup),

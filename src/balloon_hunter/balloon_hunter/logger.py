@@ -292,7 +292,7 @@ class FilterLogger(Node):
             )
 
         # Auto-terminate on collision
-        if dist < self.collision_dist and self.mission_state == 'INTERCEPT':
+        if dist < self.collision_dist and self.mission_state == 'TRACKING':
             self.get_logger().info(
                 f'[{self.filter_type}] COLLISION detected (dist={dist:.2f}m) '
                 f'at t={t:.2f}s — saving and shutting down'

@@ -640,16 +640,14 @@ class FilterNode(Node):
         self.mission_state = msg.data
 
     def det_cb(self, msg: TargetInfo):
-        active = self.mission_state in ('SEARCH', 'INTERCEPT')
-        if not active and self.mission_state != 'TAKEOFF':
+        active = self.mission_state in ('HOVER_INIT', 'TRACKING')
+        if not active:
             return
 
         u = (msg.left + msg.right) * 0.5
         v = (msg.top + msg.bottom) * 0.5
 
         if self.filter_type == 'GT':
-            if not active:
-                return
             uv = np.array([u, v])
             if self._gt_prev_uv is not None:
                 duv = (uv - self._gt_prev_uv) / self._gt_dt
@@ -673,15 +671,13 @@ class FilterNode(Node):
             self._predict_frozen = False
 
     def predict_and_publish(self):
-        active = self.mission_state in ('SEARCH', 'INTERCEPT')
-        if not active and self.mission_state != 'TAKEOFF':
+        active = self.mission_state in ('HOVER_INIT', 'TRACKING')
+        if not active:
             return
 
         R_e_b = rot_z(self.drone_yaw) @ rot_y(self.drone_pitch_val) @ rot_x(self.drone_roll)
 
         if self.filter_type == 'GT':
-            if not active:
-                return
             est = self._gt_pixel
         else:
             # Freeze prediction when no measurement received for too long
