@@ -4,10 +4,10 @@ Launch file for real-world IBVS + PNG balloon tracking.
 
 Architecture (same as simulation, minus Gazebo/SITL):
   balloon_detector (YOLO)   -> /target_info
-  ibvs_controller           -> /ibvs/output
+  filter_node (DKF/EKF)     -> /filter_estimate
+  ibvs_controller           -> /ibvs/output   (subscribes /filter_estimate)
   png_guidance              -> /png/guidance_cmd
   drone_manager_real (FSM)  -> PX4 setpoints
-  filter_node (DKF/EKF)     -> /filter_estimate (for logger)
 
 Flow:
   1. Drone flies under RC control
@@ -47,6 +47,7 @@ def launch_setup(context, *args, **kwargs):
     fy = float(LaunchConfiguration('fy').perform(context))
     cx = float(LaunchConfiguration('cx').perform(context))
     cy = float(LaunchConfiguration('cy').perform(context))
+    cam_pitch_deg = float(LaunchConfiguration('cam_pitch_deg').perform(context))
 
     # IBVS gains
     fov_kp   = float(LaunchConfiguration('fov_kp').perform(context))
@@ -102,6 +103,7 @@ def launch_setup(context, *args, **kwargs):
             'fov_kp': fov_kp, 'fov_kd': fov_kd,
             'fov_kp_z': fov_kp_z, 'fov_kd_z': fov_kd_z,
             'target_timeout': 0.5,
+            'cam_pitch_deg': cam_pitch_deg,
         }],
     )
 
@@ -145,9 +147,9 @@ def launch_setup(context, *args, **kwargs):
             'filter_type': filter_type,
             'fx': fx, 'fy': fy,
             'cx': cx, 'cy': cy,
-            'cam_pitch_deg': 0.0,
+            'cam_pitch_deg': cam_pitch_deg,
             'dkf_dt': 0.02,
-            'dkf_delay_steps': 2,
+            'dkf_delay_steps': 3,
             'assumed_depth': 10.0,
         }],
     )
@@ -163,7 +165,7 @@ def launch_setup(context, *args, **kwargs):
             'system_id': system_id,
             'fx': fx, 'fy': fy,
             'cx': cx, 'cy': cy,
-            'cam_pitch_deg': 0.0,
+            'cam_pitch_deg': cam_pitch_deg,
             'collision_distance': 999.0,  # effectively disable collision auto-shutdown
         }],
     )
@@ -191,16 +193,14 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    # ── 9. Rosbag Record ──
-    bag_dir = os.path.expanduser('~/dkf_logs')
+    # ── 9. Rosbag Record (이미지 제외, 제어/상태 토픽만) ──
+    bag_dir = '/home/suvlab/suicidedrone_log'
+    os.makedirs(bag_dir, exist_ok=True)
     bag_name = f'rosbag_{datetime.now().strftime("%Y%m%d_%H%M%S")}_drone{system_id}'
     rosbag_record = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'record',
             '-o', os.path.join(bag_dir, bag_name),
-            # 이미지
-            camera_topic,
-            f'/inference_result_{system_id}',
             # 감지 / 필터 / 제어
             '/target_info',
             '/filter_estimate',
@@ -213,6 +213,7 @@ def launch_setup(context, *args, **kwargs):
             f'drone{system_id}/fmu/out/vehicle_angular_velocity',
             f'drone{system_id}/fmu/out/vehicle_attitude',
             f'drone{system_id}/fmu/out/vehicle_status',
+            f'drone{system_id}/fmu/out/vehicle_acceleration',
             # PX4 입력
             f'drone{system_id}/fmu/in/trajectory_setpoint',
             f'drone{system_id}/fmu/in/offboard_control_mode',
@@ -250,46 +251,48 @@ def generate_launch_description():
                               description='MicroXRCE-DDS agent UDP port'),
 
         # ── Camera ──
-        DeclareLaunchArgument('camera_topic', default_value='/drone1/camera/image_raw',
-                              description='Camera image topic name'),
+        DeclareLaunchArgument('camera_topic', default_value='/camera/camera/color/image_raw',
+                              description='Camera image topic (RealSense color stream)'),
         DeclareLaunchArgument('model_path',
-                              default_value='/home/kiki/suicidedrone/src/balloon_hunter/models/yolov8n.pt',
-                              description='YOLO model weights path'),
-        DeclareLaunchArgument('target_class', default_value='sports ball',
-                              description='YOLO class name to detect'),
+                              default_value='../yolo_pt/balloon_yolov8n.pt',
+                              description='YOLO model weights path (relative to balloon_detector.py, or absolute)'),
+        DeclareLaunchArgument('target_class', default_value='red-balloon',
+                              description='YOLO class name to detect (substring match)'),
         DeclareLaunchArgument('conf', default_value='0.5',
                               description='YOLO confidence threshold'),
 
-        # ── Camera Intrinsics (calibrate for your real camera!) ──
-        DeclareLaunchArgument('fx', default_value='454.8'),
-        DeclareLaunchArgument('fy', default_value='454.8'),
-        DeclareLaunchArgument('cx', default_value='424.0'),
-        DeclareLaunchArgument('cy', default_value='240.0'),
+        # ── Camera Intrinsics (RealSense D435 color, 1280x720, from camera_info) ──
+        DeclareLaunchArgument('fx', default_value='643.2935'),
+        DeclareLaunchArgument('fy', default_value='642.6299'),
+        DeclareLaunchArgument('cx', default_value='644.1669'),
+        DeclareLaunchArgument('cy', default_value='355.8758'),
+        DeclareLaunchArgument('cam_pitch_deg', default_value='45.0',
+                              description='Camera mount pitch [deg], positive = tilted down from forward'),
 
         # ── IBVS Gains ──
-        DeclareLaunchArgument('fov_kp',   default_value='1.5'),
-        DeclareLaunchArgument('fov_kd',   default_value='0.1'),
-        DeclareLaunchArgument('fov_kp_z', default_value='1.5'),
-        DeclareLaunchArgument('fov_kd_z', default_value='0.1'),
+        DeclareLaunchArgument('fov_kp',   default_value='0.5'),
+        DeclareLaunchArgument('fov_kd',   default_value='0.05'),
+        DeclareLaunchArgument('fov_kp_z', default_value='0.5'),
+        DeclareLaunchArgument('fov_kd_z', default_value='0.05'),
 
         # ── PNG Parameters ──
         DeclareLaunchArgument('Ky', default_value='3.0'),
         DeclareLaunchArgument('Kz', default_value='3.0'),
-        DeclareLaunchArgument('ka', default_value='2.0'),
-        DeclareLaunchArgument('v_max', default_value='3.0',
+        DeclareLaunchArgument('ka', default_value='0.5'),
+        DeclareLaunchArgument('v_max', default_value='0.7',
                               description='Max intercept speed [m/s]'),
-        DeclareLaunchArgument('v_init', default_value='1.5',
+        DeclareLaunchArgument('v_init', default_value='0.5',
                               description='Initial intercept speed [m/s]'),
         DeclareLaunchArgument('rate', default_value='50.0',
                               description='Guidance loop rate [Hz]'),
 
         # ── Drone Manager ──
-        DeclareLaunchArgument('hover_init_duration', default_value='2.0',
+        DeclareLaunchArgument('hover_init_duration', default_value='3.0',
                               description='Hover time for filter initialization [s]'),
 
         # ── Filter ──
-        DeclareLaunchArgument('filter_type', default_value='DKF18',
-                              description='Filter: DKF, EKF, DKF18, EKF18'),
+        DeclareLaunchArgument('filter_type', default_value='DKF',
+                              description='Filter: DKF (full 18-state, paper-faithful) or EKF (same model, no delay replay)'),
 
         OpaqueFunction(function=launch_setup),
     ])

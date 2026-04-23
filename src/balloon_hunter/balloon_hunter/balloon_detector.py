@@ -1,19 +1,37 @@
 #!/usr/bin/env python3
 """
-Balloon Detector Node using YOLO
-Detects red balloons from camera feed using YOLOv8.
-Publishes first matching detection as TargetInfo on /target_info.
+Balloon Detector Node (YOLOv8 TensorRT)
+=======================================
+Adapted from the in-drone tested RealsenseYoloNode.
+
+Runs YOLOv8 with TensorRT + FP16 on CUDA (device=0, half=True) and publishes
+the first matching detection as TargetInfo for the IBVS/DKF pipeline.
+
+Subscriptions:
+  /camera/camera/color/image_raw   (sensor_msgs/Image) — RealSense color stream
+
+Publications:
+  /target_info                     (suicide_drone_msgs/TargetInfo)
+                                   — single best matching detection for the pipeline
+  /inference_result_{system_id}    (sensor_msgs/Image) — annotated visualization
+  /raw_img_{system_id}             (sensor_msgs/Image) — raw passthrough
+
+Key notes:
+  * Preserves the original camera header.stamp on /target_info so the DKF can
+    compute true image latency (do NOT overwrite stamp with now()).
+  * QoS depth=1 on the image subscriber: always process the freshest frame.
+  * TensorRT warmup at startup to avoid first-frame lag.
 """
 
-import torch
-from ultralytics import YOLO
+import os
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from suicide_drone_msgs.msg import TargetInfo
-import cv2
+from ultralytics import YOLO
 
 bridge = CvBridge()
 
@@ -22,146 +40,138 @@ class BalloonDetector(Node):
     def __init__(self):
         super().__init__('balloon_detector')
 
-        # Parameters
+        # ── Parameters ──
         self.declare_parameter('system_id', 1)
-        self.declare_parameter('camera_topic', '/drone1/camera/image_raw')
-        self.declare_parameter('model_path', '/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt')
+        self.declare_parameter('camera_topic', '/camera/camera/color/image_raw')
+        self.declare_parameter('model_path', '../yolo_pt/balloon_yolov8n.pt')
         self.declare_parameter('conf', 0.5)
-        self.declare_parameter('target_class', 'sports ball')
+        self.declare_parameter('target_class', 'red-balloon')
+        self.declare_parameter('warmup_h', 720)
+        self.declare_parameter('warmup_w', 1280)
 
-        self.system_id = self.get_parameter('system_id').value
-        self.camera_topic = self.get_parameter('camera_topic').value
-        model_path = self.get_parameter('model_path').value
-        self.conf = self.get_parameter('conf').value
+        self.system_id    = self.get_parameter('system_id').value
+        camera_topic      = self.get_parameter('camera_topic').value
+        model_name        = self.get_parameter('model_path').value
+        self.conf         = self.get_parameter('conf').value
         self.target_class = self.get_parameter('target_class').value
+        warmup_h          = self.get_parameter('warmup_h').value
+        warmup_w          = self.get_parameter('warmup_w').value
 
-        # Load YOLO model
-        self.get_logger().info(f'Loading YOLO model from: {model_path}')
-        self.model = YOLO(model_path)
+        # ── Resolve model path: script-relative first, then as given ──
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(script_dir, model_name)
+        if not os.path.exists(model_path):
+            model_path = model_name
 
-        # Try to use GPU if available
-        if torch.cuda.is_available():
-            self.device = 'cuda:0'
-            self.model.to('cuda:0')
-            self.get_logger().info('Using GPU (CUDA)')
-        else:
-            self.device = 'cpu'
-            self.get_logger().info('Using CPU (GPU not available)')
+        self.get_logger().info(f'Loading YOLO model: {model_path}')
+        try:
+            self.model = YOLO(model_path, task='detect')
+        except Exception as e:
+            self.get_logger().error(f'Model load failed: {e}')
+            raise
 
-        # Get target class ID
-        names = self.model.names
-        if isinstance(names, dict):
-            matching_classes = [k for k, v in names.items() if self.target_class.lower() in v.lower()]
-            if matching_classes:
-                self.target_cls_id = matching_classes[0]
-            else:
-                self.get_logger().warn(f'Target class "{self.target_class}" not found, using all classes')
-                self.target_cls_id = None
-        else:
-            matching_classes = [i for i, v in enumerate(names) if self.target_class.lower() in v.lower()]
-            if matching_classes:
-                self.target_cls_id = matching_classes[0]
-            else:
-                self.target_cls_id = None
+        # ── TensorRT / CUDA warmup ──
+        self.get_logger().info('TensorRT warmup...')
+        dummy = np.zeros((warmup_h, warmup_w, 3), dtype=np.uint8)
+        self.model(dummy, device=0, half=True, verbose=False)
+        self.get_logger().info('Warmup done')
 
-        self.get_logger().info(f'Target class: {self.target_class}, ID: {self.target_cls_id}, conf={self.conf}')
+        self.get_logger().info(
+            f'Target class filter: "{self.target_class}"  |  conf={self.conf}'
+        )
 
-        # QoS Profile
-        qos_profile = QoSProfile(
+        # ── Publishers ──
+        self.target_pub  = self.create_publisher(TargetInfo, '/target_info', 10)
+        self.img_pub     = self.create_publisher(
+            Image, f'/inference_result_{self.system_id}', 1
+        )
+        self.raw_img_pub = self.create_publisher(
+            Image, f'/raw_img_{self.system_id}', 1
+        )
+
+        # ── Subscriber (depth=1: always the freshest frame) ──
+        qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=5
+            depth=1,
         )
-
-        # Subscriber
         self.image_sub = self.create_subscription(
-            Image,
-            self.camera_topic,
-            self.camera_callback,
-            qos_profile
+            Image, camera_topic, self.image_callback, qos,
         )
+        self.get_logger().info(f'Subscribed to: {camera_topic}')
 
-        # Publishers
-        self.target_pub = self.create_publisher(TargetInfo, '/target_info', 10)
-
-        self.img_pub = self.create_publisher(
-            Image,
-            f'/inference_result_{self.system_id}',
-            10
-        )
-
-        self.get_logger().info('Balloon Detector initialized')
-        self.get_logger().info(f'Subscribing to: {self.camera_topic}')
-
-    def camera_callback(self, msg: Image):
-        """Process camera images with YOLO"""
+    # ── Callback ──
+    def image_callback(self, msg: Image):
         try:
-            self.get_logger().info('[DEBUG] Balloon detector: Camera callback triggered', throttle_duration_sec=5.0)
-            cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            img = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            self.get_logger().error(f'cv_bridge failed: {e}')
+            return
 
-            results = self.model.predict(
-                source=cv_image,
-                conf=self.conf,
-                device=self.device,
-                verbose=False
+        # Raw passthrough (keeps original header for logging)
+        raw_out = bridge.cv2_to_imgmsg(img, encoding='bgr8')
+        raw_out.header = msg.header
+        self.raw_img_pub.publish(raw_out)
+
+        # TensorRT FP16 inference
+        results = self.model(
+            img, device=0, half=True, conf=self.conf, verbose=False
+        )
+
+        # ── Pick first box whose class name contains target_class ──
+        target_lower = self.target_class.lower().strip()
+        best_box, best_class = None, None
+        for box in results[0].boxes:
+            cls_id   = int(box.cls[0])
+            cls_name = self.model.names[cls_id]
+            if target_lower and target_lower not in cls_name.lower():
+                continue
+            best_box, best_class = box, cls_name
+            break  # first matching detection only
+
+        if best_box is not None:
+            x1, y1, x2, y2 = best_box.xyxy[0].tolist()
+            tgt = TargetInfo()
+            # IMPORTANT: preserve original camera timestamp for DKF delay comp.
+            tgt.header.stamp    = msg.header.stamp
+            tgt.header.frame_id = msg.header.frame_id
+            tgt.class_name = best_class
+            tgt.left   = int(x1)
+            tgt.top    = int(y1)
+            tgt.right  = int(x2)
+            tgt.bottom = int(y2)
+            self.target_pub.publish(tgt)
+
+            self.get_logger().info(
+                f'{best_class}: bbox=({int(x1)},{int(y1)})-({int(x2)},{int(y2)})',
+                throttle_duration_sec=1.0,
             )
 
-            if results and len(results) > 0:
-                result = results[0]
-                boxes = result.boxes
-
-                if boxes is not None and len(boxes) > 0:
-                    for box in boxes:
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        conf = float(box.conf[0].cpu().numpy())
-                        cls_id = int(box.cls[0].cpu().numpy())
-
-                        if self.target_cls_id is not None and cls_id != self.target_cls_id:
-                            continue
-
-                        # Publish first detection as TargetInfo
-                        target_info            = TargetInfo()
-                        target_info.header     = msg.header
-                        target_info.header.stamp = self.get_clock().now().to_msg()
-                        target_info.class_name = self.model.names[cls_id]
-                        target_info.left       = int(x1)
-                        target_info.top        = int(y1)
-                        target_info.right      = int(x2)
-                        target_info.bottom     = int(y2)
-                        self.target_pub.publish(target_info)
-
-                        # Draw on image
-                        cv2.rectangle(cv_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-                        label = f'{target_info.class_name}: {conf:.2f}'
-                        cv2.putText(cv_image, label, (int(x1), int(y1) - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
-                        self.get_logger().info(
-                            f'[DEBUG] Publishing detection: bbox=({int(x1)},{int(y1)},{int(x2)},{int(y2)}), topic=/target_info',
-                            throttle_duration_sec=1.0
-                        )
-                        break  # first target only
-
-            # Publish visualization
-            img_msg = bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
-            img_msg.header = msg.header
-            self.img_pub.publish(img_msg)
-
-        except Exception as e:
-            self.get_logger().error(f'Error in camera callback: {str(e)}')
+        # Annotated visualization (always publish)
+        annotated = results[0].plot()
+        ann_out = bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
+        ann_out.header = msg.header
+        self.img_pub.publish(ann_out)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = BalloonDetector()
-
+    node = None
     try:
+        node = BalloonDetector()
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        if node:
+            node.get_logger().info('Ctrl+C detected, shutting down...')
+    except Exception as e:
+        if node:
+            node.get_logger().error(f'Unexpected error: {e}')
+        raise
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if node:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

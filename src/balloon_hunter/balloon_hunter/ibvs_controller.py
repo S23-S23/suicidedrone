@@ -13,7 +13,8 @@ Equations implemented:
   Eq.(13): FOV yaw rate controller using IMU angular velocity (avoids numerical diff)
 
 Subscriptions:
-  /target_info                                 — TargetInfo (bbox from detector)
+  /filter_estimate                             — Float32MultiArray [u, v, u_dot, v_dot, delay_steps]
+                                                 (DKF/EKF output from filter_node)
   drone{id}/fmu/out/vehicle_attitude           — quaternion FRD body -> NED
   drone{id}/fmu/out/vehicle_angular_velocity   — FRD body angular velocity
 
@@ -28,7 +29,8 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from px4_msgs.msg import VehicleAttitude, VehicleAngularVelocity
-from suicide_drone_msgs.msg import TargetInfo, IBVSOutput
+from std_msgs.msg import Float32MultiArray
+from suicide_drone_msgs.msg import IBVSOutput
 
 
 def quat_to_R(q):
@@ -39,6 +41,12 @@ def quat_to_R(q):
         [    2*(x*y + w*z), 1 - 2*(x*x + z*z),     2*(y*z - w*x)],
         [    2*(x*z - w*y),     2*(y*z + w*x), 1 - 2*(x*x + y*y)],
     ], dtype=float)
+
+
+def rot_x(a):
+    """Rotation around x-axis by angle `a` [rad]."""
+    ca, sa = math.cos(a), math.sin(a)
+    return np.array([[1, 0, 0], [0, ca, -sa], [0, sa, ca]], dtype=float)
 
 
 class IBVSController(Node):
@@ -60,6 +68,9 @@ class IBVSController(Node):
         self.declare_parameter('fov_kd_z', 0.1)
         # Seconds without detection before target_detected -> False
         self.declare_parameter('target_timeout', 0.5)
+        # Camera mount pitch angle [deg], positive = tilted down from forward
+        # Must match filter_node's cam_pitch_deg for consistent LOS calculation
+        self.declare_parameter('cam_pitch_deg', 0.0)
 
         system_id          = self.get_parameter('system_id').value
         self.fx            = self.get_parameter('fx').value
@@ -71,16 +82,18 @@ class IBVSController(Node):
         self.fov_kp_z      = self.get_parameter('fov_kp_z').value
         self.fov_kd_z      = self.get_parameter('fov_kd_z').value
         self.target_timeout = self.get_parameter('target_timeout').value
+        self.cam_pitch      = math.radians(self.get_parameter('cam_pitch_deg').value)
 
         # ── Camera (OpenCV) -> Body (FRD) rotation matrix ───────────────────
         # OpenCV: X=right, Y=down, Z=forward
         # FRD:    X=forward, Y=right, Z=down
-        # body_x = cam_z, body_y = cam_x, body_z = cam_y
+        # Base: body_x = cam_z, body_y = cam_x, body_z = cam_y
+        # Then apply camera pitch (rot_x in cam frame): positive = tilt down.
         self.R_b_c = np.array([
             [0, 0, 1],   # body_x <- cam_z  (forward)
             [1, 0, 0],   # body_y <- cam_x  (right)
             [0, 1, 0],   # body_z <- cam_y  (down)
-        ], dtype=float)
+        ], dtype=float) @ rot_x(-self.cam_pitch)
 
         # ── Runtime state ───────────────────────────────────────────────────
         self.R_e_b             = np.eye(3)   # FRD -> NED rotation (Eq.5)
@@ -90,8 +103,8 @@ class IBVSController(Node):
 
         # ── Subscriptions ───────────────────────────────────────────────────
         self.create_subscription(
-            TargetInfo,
-            '/target_info',
+            Float32MultiArray,
+            '/filter_estimate',
             self.detection_callback,
             10,
         )
@@ -114,7 +127,7 @@ class IBVSController(Node):
         # Timeout checker at 10 Hz
         self.create_timer(0.1, self._timeout_check)
 
-        self.get_logger().info('IBVSController started: /target_info -> /ibvs/output')
+        self.get_logger().info('IBVSController started: /filter_estimate -> /ibvs/output')
 
     # ── IMU callbacks ────────────────────────────────────────────────────────
 
@@ -127,17 +140,22 @@ class IBVSController(Node):
 
     # ── Detection callback ───────────────────────────────────────────────────
 
-    def detection_callback(self, msg: TargetInfo):
+    def detection_callback(self, msg: Float32MultiArray):
         """
-        Process detection and compute IBVS outputs.
+        Process DKF/EKF filter estimate and compute IBVS outputs.
+
+        Input: Float32MultiArray [u, v, u_dot, v_dot, delay_steps]
+               — smoothed pixel position from filter_node.
 
         Eq.(3):  ex = (u - cx) / fx,  ey = (v - cy) / fy
         Eq.(5):  n_t = R_e_b @ R_b_c @ [ex, ey, 1]^T  (normalized)
         Eq.(7):  q_y = atan2(-n_t_z, ||n_t_xy||),  q_z = atan2(n_t_y, n_t_x)
         Eq.(13): w_yaw = kp*ex + kd*(-(1+ex^2)*b_w_z)
         """
-        u = (msg.left + msg.right)  * 0.5
-        v = (msg.top  + msg.bottom) * 0.5
+        if len(msg.data) < 2:
+            return
+        u = float(msg.data[0])
+        v = float(msg.data[1])
 
         # Eq.(3): normalized image-plane error
         ex = (u - self.cx) / self.fx
@@ -172,7 +190,7 @@ class IBVSController(Node):
         self.last_detect_time = self.get_clock().now()
 
         ibvs_msg             = IBVSOutput()
-        ibvs_msg.header      = msg.header
+        ibvs_msg.header.stamp = self.get_clock().now().to_msg()
         ibvs_msg.detected    = True
         ibvs_msg.q_y         = q_y
         ibvs_msg.q_z         = q_z
