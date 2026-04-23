@@ -370,7 +370,12 @@ def launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
-        DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt'),
+        DeclareLaunchArgument(
+            'model_path',
+            default_value=os.path.join(
+                get_package_share_directory('balloon_hunter'), 'models', 'yolov8n.pt'
+            ),
+        ),
         DeclareLaunchArgument('filter_type', default_value='DKF'),
         DeclareLaunchArgument('detector_type', default_value='YOLO'),
         DeclareLaunchArgument(

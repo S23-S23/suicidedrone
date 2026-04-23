@@ -32,6 +32,8 @@ setup(
         # iris_depth_camera 모델 추가 (Jinja 템플릿 포함)
         (os.path.join('share', package_name, 'models', 'iris_depth_camera'),
             glob('models/iris_depth_camera/*.sdf*') + glob('models/iris_depth_camera/*.config') + glob('models/iris_depth_camera/*.jinja')),
+        # YOLO weights
+        (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
