@@ -13,7 +13,7 @@ Equations implemented:
   Eq.(13): FOV yaw rate controller using IMU angular velocity (avoids numerical diff)
 
 Subscriptions:
-  /target_info                                 — TargetInfo (bbox from detector)
+  /filter_estimate                             — Float32MultiArray [u, v, u_dot, v_dot, delay]
   drone{id}/fmu/out/vehicle_attitude           — quaternion FRD body -> NED
   drone{id}/fmu/out/vehicle_angular_velocity   — FRD body angular velocity
 
@@ -27,8 +27,9 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
+from std_msgs.msg import Float32MultiArray
 from px4_msgs.msg import VehicleAttitude, VehicleAngularVelocity
-from suicide_drone_msgs.msg import TargetInfo, IBVSOutput
+from suicide_drone_msgs.msg import IBVSOutput
 
 
 def quat_to_R(q):
@@ -90,9 +91,9 @@ class IBVSController(Node):
 
         # ── Subscriptions ───────────────────────────────────────────────────
         self.create_subscription(
-            TargetInfo,
-            '/target_info',
-            self.detection_callback,
+            Float32MultiArray,
+            '/filter_estimate',
+            self.filter_callback,
             10,
         )
         self.create_subscription(
@@ -114,7 +115,7 @@ class IBVSController(Node):
         # Timeout checker at 10 Hz
         self.create_timer(0.1, self._timeout_check)
 
-        self.get_logger().info('IBVSController started: /target_info -> /ibvs/output')
+        self.get_logger().info('IBVSController started: /filter_estimate -> /ibvs/output')
 
     # ── IMU callbacks ────────────────────────────────────────────────────────
 
@@ -125,19 +126,28 @@ class IBVSController(Node):
         self.b_omega_y = float(msg.xyz[1])
         self.b_omega_z = float(msg.xyz[2])
 
-    # ── Detection callback ───────────────────────────────────────────────────
+    # ── Filter estimate callback ────────────────────────────────────────────
 
-    def detection_callback(self, msg: TargetInfo):
+    def filter_callback(self, msg: Float32MultiArray):
         """
-        Process detection and compute IBVS outputs.
+        Process DKF/EKF filter estimate and compute IBVS outputs.
+
+        Input: Float32MultiArray [u_px, v_px, u_dot_px, v_dot_px, delay_steps]
+          u_px, v_px:         filtered pixel coordinates
+          u_dot_px, v_dot_px: filtered pixel velocities [px/s]
 
         Eq.(3):  ex = (u - cx) / fx,  ey = (v - cy) / fy
         Eq.(5):  n_t = R_e_b @ R_b_c @ [ex, ey, 1]^T  (normalized)
         Eq.(7):  q_y = atan2(-n_t_z, ||n_t_xy||),  q_z = atan2(n_t_y, n_t_x)
-        Eq.(13): w_yaw = kp*ex + kd*(-(1+ex^2)*b_w_z)
+        Eq.(13): w_yaw = kp*ex + kd*ex_dot   (ex_dot from filter)
         """
-        u = (msg.left + msg.right)  * 0.5
-        v = (msg.top  + msg.bottom) * 0.5
+        if len(msg.data) < 4:
+            return
+
+        u     = msg.data[0]   # filtered pixel x
+        v     = msg.data[1]   # filtered pixel y
+        u_dot = msg.data[2]   # filtered pixel velocity x [px/s]
+        v_dot = msg.data[3]   # filtered pixel velocity y [px/s]
 
         # Eq.(3): normalized image-plane error
         ex = (u - self.cx) / self.fx
@@ -153,31 +163,28 @@ class IBVSController(Node):
         n_t = ray_ned / norm
 
         # Eq.(7): LOS angles in NED spherical coordinates
-        #   azimuth q_z: angle from North in horizontal plane
         q_z = math.atan2(n_t[1], n_t[0])
-        #   elevation q_y: angle above horizontal (NED z=Down, so -z = Up)
         q_y = math.atan2(-n_t[2], math.sqrt(n_t[0]**2 + n_t[1]**2))
 
         # Eq.(13): FOV holding yaw rate controller
-        #   e_x_dot ~ -(1 + ex^2) * b_omega_z
-        ex_dot       = -(1.0 + ex**2) * self.b_omega_z
+        #   ex_dot from filter estimate (pixel velocity / focal length)
+        ex_dot       = u_dot / self.fx
         fov_yaw_rate = self.fov_kp * ex + self.fov_kd * ex_dot
 
         # Vertical (ey) controller — analogous to Eq.13 for Z axis
-        #   ey > 0 -> balloon below center -> drone descends (+NED z)
-        ey_dot    = -(1.0 + ey**2) * self.b_omega_y
+        ey_dot    = v_dot / self.fy
         fov_vel_z = self.fov_kp_z * ey + self.fov_kd_z * ey_dot
 
         # ── Publish ──────────────────────────────────────────────────────────
         self.last_detect_time = self.get_clock().now()
 
-        ibvs_msg             = IBVSOutput()
-        ibvs_msg.header      = msg.header
-        ibvs_msg.detected    = True
-        ibvs_msg.q_y         = q_y
-        ibvs_msg.q_z         = q_z
-        ibvs_msg.fov_yaw_rate = float(fov_yaw_rate)
-        ibvs_msg.fov_vel_z   = float(fov_vel_z)
+        ibvs_msg                = IBVSOutput()
+        ibvs_msg.header.stamp   = self.get_clock().now().to_msg()
+        ibvs_msg.detected       = True
+        ibvs_msg.q_y            = q_y
+        ibvs_msg.q_z            = q_z
+        ibvs_msg.fov_yaw_rate   = float(fov_yaw_rate)
+        ibvs_msg.fov_vel_z      = float(fov_vel_z)
         self.pub_ibvs.publish(ibvs_msg)
 
         self.get_logger().info(

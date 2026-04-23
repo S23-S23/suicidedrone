@@ -27,11 +27,9 @@ matplotlib.rcParams['font.family'] = 'DejaVu Sans'
 
 # Color map for filter types
 COLORS = {
-    'DKF':   '#2980b9',
-    'DKF18': '#2980b9',
-    'EKF':   '#e74c3c',
-    'EKF18': '#e74c3c',
-    'GT':    '#27ae60',
+    'DKF': '#2980b9',
+    'EKF': '#e74c3c',
+    'GT':  '#27ae60',
 }
 
 
@@ -47,7 +45,7 @@ def find_logs():
     """Find all available log files (DKF, EKF, GT) — return dict of type→path."""
     d = os.path.expanduser('~/dkf_logs')
     result = {}
-    for ftype in ('DKF18', 'EKF18', 'GT'):
+    for ftype in ('DKF', 'EKF', 'GT'):
         files = sorted(glob.glob(os.path.join(d, f'log_*_{ftype}.csv')))
         if files:
             result[ftype] = files[-1]
@@ -70,7 +68,7 @@ def get_filter_type(df):
         vals = df['filter_type'].dropna().unique()
         # Could be numeric if coerced, check string column
         for v in vals:
-            if isinstance(v, str) and v in ('DKF18', 'EKF18', 'GT'):
+            if isinstance(v, str) and v in ('DKF', 'EKF', 'GT'):
                 return v
     return 'UNKNOWN'
 

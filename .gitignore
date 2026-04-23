@@ -7,3 +7,5 @@ log/
 .vscode/
 *.pyc
 __pycache__/
+src/balloon_hunter/balloon_hunter/plot_convergence.py
+src/balloon_hunter/balloon_hunter/yolo_to_target.py

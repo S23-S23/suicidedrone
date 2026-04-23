@@ -35,23 +35,25 @@ Visualization Manager:
         All Enabled: true
       Marker Scale: 1
 
-    - Class: rviz_default_plugins/Path
-      Name: Drone Trajectory
+    - Class: rviz_default_plugins/Marker
+      Name: GT Trajectory (green)
       Enabled: true
       Value: true
       Topic:
-        Value: /drone/trajectory
+        Value: /drone/gt_trajectory
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
-      Color: 0; 255; 0
-      Line Style: Lines
-      Line Width: 0.03
-      Offset:
-        X: 0
-        Y: 0
-        Z: 0
-      Pose Style: None
+
+    - Class: rviz_default_plugins/Marker
+      Name: PX4 Trajectory (yellow)
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone/px4_trajectory
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
 
     - Class: rviz_default_plugins/Marker
       Name: Balloon Marker
@@ -62,6 +64,30 @@ Visualization Manager:
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
+
+    - Class: rviz_default_plugins/Marker
+      Name: Mission State Text
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone/state_text
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    - Class: rviz_default_plugins/Image
+      Name: IBVS Debug Image
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /ibvs/debug_image
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
 
     - Class: rviz_default_plugins/Pose
       Name: Drone Pose

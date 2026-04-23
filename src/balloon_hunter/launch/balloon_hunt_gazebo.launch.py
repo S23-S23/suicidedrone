@@ -15,6 +15,7 @@ Usage:
   ros2 launch balloon_hunter balloon_hunt_gazebo.launch.py detector_type:=GT filter_type:=GT
 """
 import os
+from datetime import datetime
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration
@@ -293,6 +294,11 @@ def launch_setup(context, *args, **kwargs):
             'balloon_model_name': 'target_balloon',
             'balloon_radius': 0.3,
             'balloon_link_z_offset': 1.5,
+            'fx': 454.8,
+            'fy': 454.8,
+            'cx': 424.0,
+            'cy': 240.0,
+            'camera_topic': f'/drone{drone_id}/camera/image_raw',
         }]
     )
 
@@ -305,6 +311,26 @@ def launch_setup(context, *args, **kwargs):
         arguments=['-d', rviz_config],
         output='screen',
     )
+
+    # ── ros2 bag recording (mcap) ────────────────────────────────────────────
+    # Records all topics for later inspection in Foxglove Studio.
+    # Storage format: mcap (install: ros-$ROS_DISTRO-rosbag2-storage-mcap)
+    bag_enable = LaunchConfiguration('bag_enable').perform(context).lower()
+    bag_actions = []
+    if bag_enable != 'false':
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        bag_dir   = LaunchConfiguration('bag_dir').perform(context)
+        bag_path  = os.path.join(bag_dir, f'balloon_hunt_{timestamp}')
+        os.makedirs(bag_dir, exist_ok=True)
+        bag_actions.append(ExecuteProcess(
+            cmd=[
+                'ros2', 'bag', 'record',
+                '--all',
+                '--storage', 'mcap',
+                '--output', bag_path,
+            ],
+            output='screen',
+        ))
 
     # ── Event chaining ──
     start_spawn_drone1 = TimerAction(period=2.0, actions=[spawn_drone1])
@@ -337,6 +363,7 @@ def launch_setup(context, *args, **kwargs):
         px4_1_event,
         mission_nodes_event,
         rviz_node,
+        *bag_actions,
     ]
 
 
@@ -346,5 +373,18 @@ def generate_launch_description():
         DeclareLaunchArgument('model_path', default_value='/home/kiki/visionws/src/balloon_hunter/models/yolov8n.pt'),
         DeclareLaunchArgument('filter_type', default_value='DKF'),
         DeclareLaunchArgument('detector_type', default_value='YOLO'),
+        DeclareLaunchArgument(
+            'bag_enable',
+            default_value='true',
+            description='Enable ros2 bag mcap recording: true | false'
+        ),
+        DeclareLaunchArgument(
+            'bag_dir',
+            # install/<pkg>/share/<pkg>  →  ../../../../log/rosbag  =  <ws>/log/rosbag
+            default_value=os.path.normpath(os.path.join(
+                get_package_share_directory('balloon_hunter'),
+                '..', '..', '..', '..', 'log', 'rosbag')),
+            description='Directory to save mcap bag files (default: <workspace>/log/rosbag)'
+        ),
         OpaqueFunction(function=launch_setup)
     ])
