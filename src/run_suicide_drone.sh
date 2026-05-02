@@ -12,8 +12,17 @@
 
 set -e  # 에러 발생 시 스크립트 중단
 
-# 스크립트 종료(Ctrl-C, 에러 등) 시 모든 자식 프로세스 함께 종료
-trap "echo ''; echo '[run_balloon_hunt] 종료 중... 모든 프로세스 정리'; kill 0" EXIT INT TERM
+# 스크립트 종료(Ctrl-C, 에러 등) 시 모든 자식 프로세스 함께 종료 (한 번만 실행)
+_cleanup_done=0
+cleanup() {
+    [ "$_cleanup_done" = "1" ] && return
+    _cleanup_done=1
+    echo ''
+    echo '[run_balloon_hunt] 종료 중... 모든 프로세스 정리'
+    trap - EXIT INT TERM
+    kill 0 2>/dev/null
+}
+trap cleanup EXIT INT TERM
 
 # ── 0. ROS2 Humble 기본 환경 소싱 ─────────────────────────────────────────
 source /opt/ros/humble/setup.bash
