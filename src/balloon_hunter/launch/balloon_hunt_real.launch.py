@@ -24,7 +24,6 @@ Usage:
 """
 import os
 from datetime import datetime
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -65,15 +64,6 @@ def launch_setup(context, *args, **kwargs):
 
     # Drone manager
     hover_init_duration = float(LaunchConfiguration('hover_init_duration').perform(context))
-
-    # XRCE-DDS
-    xrce_port = LaunchConfiguration('xrce_port').perform(context)
-
-    # ── MicroXRCE-DDS Agent ──
-    xrce_agent = ExecuteProcess(
-        cmd=['MicroXRCEAgent', 'udp4', '-p', xrce_port],
-        output='screen',
-    )
 
     # ── 1. YOLO Detector ──
     balloon_detector_node = Node(
@@ -182,18 +172,7 @@ def launch_setup(context, *args, **kwargs):
         }],
     )
 
-    # ── 8. RViz2 (optional) ──
-    current_package_path = get_package_share_directory('balloon_hunter')
-    rviz_config = os.path.join(current_package_path, 'config', 'drone_trajectory.rviz')
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config],
-        output='screen',
-    )
-
-    # ── 9. Rosbag Record (이미지 제외, 제어/상태 토픽만) ──
+    # ── 8. Rosbag Record (이미지 제외, 제어/상태 토픽만) ──
     bag_dir = '/home/suvlab/suicidedrone_log'
     os.makedirs(bag_dir, exist_ok=True)
     bag_name = f'rosbag_{datetime.now().strftime("%Y%m%d_%H%M%S")}_drone{system_id}'
@@ -237,18 +216,14 @@ def launch_setup(context, *args, **kwargs):
     )
 
     return [
-        xrce_agent,
         mission_nodes,
-        rviz_node,
     ]
 
 
 def generate_launch_description():
     return LaunchDescription([
         # ── System ──
-        DeclareLaunchArgument('system_id', default_value='1'),
-        DeclareLaunchArgument('xrce_port', default_value='8888',
-                              description='MicroXRCE-DDS agent UDP port'),
+        DeclareLaunchArgument('system_id', default_value='2'), #edittt
 
         # ── Camera ──
         DeclareLaunchArgument('camera_topic', default_value='/camera/camera/color/image_raw',
