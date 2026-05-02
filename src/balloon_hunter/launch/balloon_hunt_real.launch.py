@@ -229,14 +229,14 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_topic', default_value='/camera/camera/color/image_raw',
                               description='Camera image topic (RealSense color stream)'),
         DeclareLaunchArgument('model_path',
-                              default_value='../yolo_pt/balloon_yolov8n.pt',
-                              description='YOLO model weights path (relative to balloon_detector.py, or absolute)'),
+                              default_value='/home/suvlab/ros2_ws/suicidedrone/src/balloon_hunter/models/balloon_yolov8n.pt',
+                              description='YOLO model weights absolute path'),
         DeclareLaunchArgument('target_class', default_value='red-balloon',
                               description='YOLO class name to detect (substring match)'),
         DeclareLaunchArgument('conf', default_value='0.5',
                               description='YOLO confidence threshold'),
 
-        # ── Camera Intrinsics (RealSense D435 color, 1280x720, from camera_info) ──
+        # ── Camera Intrinsics (RealSense D455 color, 1280x720, from camera_info) ──
         DeclareLaunchArgument('fx', default_value='643.2935'),
         DeclareLaunchArgument('fy', default_value='642.6299'),
         DeclareLaunchArgument('cx', default_value='644.1669'),
