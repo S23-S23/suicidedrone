@@ -156,7 +156,6 @@ def launch_setup(context, *args, **kwargs):
             'fx': fx, 'fy': fy,
             'cx': cx, 'cy': cy,
             'cam_pitch_deg': cam_pitch_deg,
-            'collision_distance': 999.0,  # effectively disable collision auto-shutdown
         }],
     )
 

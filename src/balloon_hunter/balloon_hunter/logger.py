@@ -16,7 +16,7 @@ Subscriptions:
   /droneN/fmu/out/vehicle_angular_velocity — omega (body-FRD)
   /filter_estimate                    — [u, v, u_dot, v_dot, delay_steps]
 
-Auto-terminates when drone–target distance < collision_distance.
+Stop logging: Ctrl-C in the launch terminal — CSV is saved automatically.
 
 Usage:
   ros2 run balloon_hunter logger --ros-args -p filter_type:=GT
@@ -63,7 +63,6 @@ class FilterLogger(Node):
         self.declare_parameter('cy', 240.0)
         self.declare_parameter('cam_pitch_deg', 0.0)
         self.declare_parameter('detection_topic', '/target_info')
-        self.declare_parameter('collision_distance', 1.0)
 
         self.filter_type = self.get_parameter('filter_type').value.upper()
         self.system_id   = self.get_parameter('system_id').value
@@ -73,7 +72,6 @@ class FilterLogger(Node):
         self.cy = self.get_parameter('cy').value
         self.cam_pitch = math.radians(self.get_parameter('cam_pitch_deg').value)
         self.foc = self.fx
-        self.collision_dist = self.get_parameter('collision_distance').value
 
         prefix = f'drone{self.system_id}/fmu/out/'
 
@@ -109,7 +107,6 @@ class FilterLogger(Node):
 
         # Mission state
         self.mission_state = 'IDLE'
-        self._finished = False
 
         # CSV setup
         log_dir = os.path.expanduser('~/dkf_logs')
@@ -246,9 +243,6 @@ class FilterLogger(Node):
 
     # ── Main logging (50Hz) ───────────────────────────────────
     def log_cb(self):
-        if self._finished:
-            return
-
         t = self.get_clock().now().nanoseconds / 1e9 - self.start_t
 
         u_gt, v_gt = self.gt_uv()
@@ -290,18 +284,6 @@ class FilterLogger(Node):
                 f'[{self.filter_type}] {self.rows} rows | '
                 f'err={err:.1f}px | dist={dist:.1f}m | D={self.delay_steps} | {self.mission_state}'
             )
-
-        # Auto-terminate on collision
-        if dist < self.collision_dist and self.mission_state == 'TRACKING':
-            self.get_logger().info(
-                f'[{self.filter_type}] COLLISION detected (dist={dist:.2f}m) '
-                f'at t={t:.2f}s — saving and shutting down'
-            )
-            self._finished = True
-            self.csv_file.flush()
-            self.csv_file.close()
-            self.get_logger().info(f'Saved {self.rows} rows to {self.csv_path}')
-            raise SystemExit(0)
 
 
 def main(args=None):

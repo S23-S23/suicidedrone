@@ -38,8 +38,8 @@ ros2 launch realsense2_camera rs_launch.py \
 RS_PID=$!
 
 # 카메라 토픽이 올라올 때까지 대기
-echo "[run_balloon_hunt]    카메라 스트림 대기 (최대 15초)..."
-for i in {1..15}; do
+echo "[run_balloon_hunt]    카메라 스트림 대기 (최대 20초)..."
+for i in {1..20}; do
     if ros2 topic list 2>/dev/null | grep -q "/camera/camera/color/image_raw"; then
         echo "[run_balloon_hunt]    카메라 OK (${i}초 후 감지)"
         break
