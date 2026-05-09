@@ -87,19 +87,20 @@ uint8 hil_state
 uint8 HIL_STATE_OFF = 0
 uint8 HIL_STATE_ON = 1
 
-# If it's a VTOL, then the value will be VEHICLE_TYPE_ROTARY_WING while flying as a multicopter, and VEHICLE_TYPE_FIXED_WING when flying as a fixed-wing
+# Current vehicle locomotion method. A vehicle can have different methods (e.g. VTOL transitions from RW to FW method)
 uint8 vehicle_type
 uint8 VEHICLE_TYPE_UNSPECIFIED = 0
 uint8 VEHICLE_TYPE_ROTARY_WING = 1
 uint8 VEHICLE_TYPE_FIXED_WING = 2
 uint8 VEHICLE_TYPE_ROVER = 3
 
-bool failsafe # true if system is in failsafe state (e.g.:RTL, Hover, Terminate, ...)
-bool failsafe_and_user_took_over # true if system is in failsafe state but the user took over control
-uint8 failsafe_defer_state # one of FAILSAFE_DEFER_STATE_*
 uint8 FAILSAFE_DEFER_STATE_DISABLED = 0
 uint8 FAILSAFE_DEFER_STATE_ENABLED = 1
 uint8 FAILSAFE_DEFER_STATE_WOULD_FAILSAFE = 2 # Failsafes deferred, but would trigger a failsafe
+
+bool failsafe # true if system is in failsafe state (e.g.:RTL, Hover, Terminate, ...)
+bool failsafe_and_user_took_over # true if system is in failsafe state but the user took over control
+uint8 failsafe_defer_state # one of FAILSAFE_DEFER_STATE_*
 
 # Link loss
 bool gcs_connection_lost              # datalink to GCS lost
@@ -114,7 +115,7 @@ bool in_transition_to_fw # True if VTOL is doing a transition from MC to FW
 
 # MAVLink identification
 uint8 system_type  # system type, contains mavlink MAV_TYPE
-uint8 system_id    # system id, contains MAVLink's system ID field
+uint8 system_id	   # system id, contains MAVLink's system ID field
 uint8 component_id # subsystem / component id, contains MAVLink's component ID field
 
 bool safety_button_available # Set to true if a safety button is connected
