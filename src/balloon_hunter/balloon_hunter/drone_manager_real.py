@@ -109,7 +109,7 @@ class DroneManagerReal(Node):
         # ── Subscribers ──
         self.create_subscription(
             VehicleStatus,
-            f'{self.topic_prefix}out/vehicle_status',
+            f'{self.topic_prefix}out/vehicle_status_v1',
             self.status_cb,
             qos_profile_sensor_data,
         )

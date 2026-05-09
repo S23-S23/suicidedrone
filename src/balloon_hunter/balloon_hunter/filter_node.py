@@ -437,7 +437,7 @@ class FilterNode(Node):
             self.monitoring_cb, qos_profile_sensor_data
         )
         self.create_subscription(
-            VehicleLocalPosition, f'{self.topic_prefix}out/vehicle_local_position',
+            VehicleLocalPosition, f'{self.topic_prefix}out/vehicle_local_position_v1',
             self.vlp_cb, qos_profile_sensor_data
         )
         self.create_subscription(

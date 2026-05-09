@@ -98,7 +98,7 @@ class PNGGuidance(Node):
         )
         self.create_subscription(
             VehicleLocalPosition,
-            f'drone{system_id}/fmu/out/vehicle_local_position',
+            f'drone{system_id}/fmu/out/vehicle_local_position_v1',
             self.local_position_callback,
             qos_profile_sensor_data,
         )

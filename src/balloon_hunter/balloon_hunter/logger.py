@@ -146,7 +146,7 @@ class FilterLogger(Node):
             self.mon_cb, qos
         )
         self.create_subscription(
-            VehicleLocalPosition, f'{prefix}vehicle_local_position',
+            VehicleLocalPosition, f'{prefix}vehicle_local_position_v1',
             self.vlp_cb, qos
         )
         self.create_subscription(
