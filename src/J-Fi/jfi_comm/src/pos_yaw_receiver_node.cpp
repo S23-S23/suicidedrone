@@ -3,6 +3,7 @@
 #include "rclcpp/qos.hpp"
 #include "jfi_comm/msg/swarm_comm.hpp"
 #include "jfi_comm/msg/pos_yaw.hpp"
+#include "std_msgs/msg/u_int32.hpp"
 
 class PosYawReceiverNode : public rclcpp::Node
 {
@@ -24,6 +25,10 @@ public:
       "/drone1/jfi/out/pos_yaw", rclcpp::SensorDataQoS()
     );
 
+    trigger_pub = this->create_publisher<std_msgs::msg::UInt32>(
+      "/tracking_trigger", rclcpp::SensorDataQoS()
+    );
+
     RCLCPP_INFO(this->get_logger(), "PosYaw Receiver Node started (System ID: %u)", drone_id_);
   }
 
@@ -34,7 +39,7 @@ private:
     if (packet->tid == 10) {
 
       RCLCPP_DEBUG(this->get_logger(),
-        "Received packet with TID 10 from system %u, seq %u, payload size: %zu",
+        "Received packet with TID 10 from system %u, seq %u, payload size: %lu",
         packet->src_sysid, packet->seq, packet->payload.size());
 
       try {
@@ -73,11 +78,33 @@ private:
           packet->src_sysid, e.what());
       }
     }
-    // 다른 TID는 무시 (필요시 추가 처리)
+    else if(packet->tid == 11) {
+      rclcpp::Serialization<jfi_comm::msg::PosYaw> serializer;
+      rclcpp::SerializedMessage serialized_msg;
+
+      serialized_msg.reserve(packet->payload.size());
+      serialized_msg.get_rcl_serialized_message().buffer_length = packet->payload.size();
+      std::memcpy(
+        serialized_msg.get_rcl_serialized_message().buffer,
+        packet->payload.data(),
+        packet->payload.size()
+      );
+
+      std_msgs::msg::UInt32 trigger;
+
+      serializer.deserialize_message(&serialized_msg, &trigger);
+
+      RCLCPP_INFO(this->get_logger(),
+        "Received trigger from Drone %u: trigger value = %u",
+        packet->src_sysid, trigger.data);
+
+        trigger_pub->publish(trigger);
+    }
   }
 
   rclcpp::Subscription<jfi_comm::msg::SwarmComm>::SharedPtr packet_sub_;
   rclcpp::Publisher<jfi_comm::msg::PosYaw>::SharedPtr pos_yaw_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr trigger_pub;
   uint8_t drone_id_;
 };
 

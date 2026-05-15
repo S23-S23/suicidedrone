@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
+from std_msgs.msg import Uint32
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, Monitoring
 from jfi_comm.msg import PosYaw
 
@@ -25,6 +26,7 @@ class DroneManager(Node):
 
         self.monitoring_msg = Monitoring()
         self.leader_pose_msg = PosYaw()
+        self.trigger_msg = False
         self.formation_radian = math.radians(self.formation_degree/2.0)
 
         self.mode_handler = ModeHandler(self)
@@ -56,12 +58,21 @@ class DroneManager(Node):
             qos_profile_sensor_data
         )
 
+        self.trigger_subscriber_ = self.create_subscription(
+            Uint32,
+            f'/tracking_trigger',
+            self.trigger_callback,
+            qos_profile_sensor_data
+        )
+
         self.timer_mission_ = self.create_timer(0.05, self.timer_mission_callback) # 20Hz
         self.timer_ocm_ = self.create_timer(0.1, self.timer_ocm_callback) # 10Hz
 
         self.get_logger().info(f'drone_manager_{self.system_id} initialized complete.')
 
     def timer_ocm_callback(self):
+        if self.trigger_msg:
+            return
         ocm_msg = OffboardControlMode()
         ocm_msg.position = True
         ocm_msg.velocity = True
@@ -72,6 +83,8 @@ class DroneManager(Node):
         self.ocm_publisher_.publish(ocm_msg)
 
     def timer_mission_callback(self):
+        if self.trigger_msg:
+            return
         if self.mode_handler.is_in_mode(Mode.QHAC):
             self.get_logger().warn(f"drone{self.system_id} is waiting for RTK fix. Current RTK N: {self.monitoring_msg.rtk_n}")
             return
@@ -112,6 +125,13 @@ class DroneManager(Node):
 
     def leader_pose_callback(self, msg):
         self.leader_pose_msg = msg
+
+    def trigger_callback(self, msg):
+        if msg.data == self.system_id:
+            self.get_logger().info(f"drone{self.system_id} received tracking trigger.")
+            self.trigger_msg = True
+        else:
+            self.trigger_msg = False
 
 # WGS-84
 a = 6378137.0

@@ -261,7 +261,7 @@ def generate_launch_description():
                               description='Guidance loop rate [Hz]'),
 
         # ── Drone Manager ──
-        DeclareLaunchArgument('hover_init_duration', default_value='3.0',
+        DeclareLaunchArgument('hover_init_duration', default_value='4.0',
                               description='Hover time for filter initialization [s]'),
 
         # ── Filter ──

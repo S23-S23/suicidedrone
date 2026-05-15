@@ -41,7 +41,7 @@ from px4_msgs.msg import (
     VehicleStatus,
     Monitoring,
 )
-from std_msgs.msg import String
+from std_msgs.msg import String, Uint32
 from suicide_drone_msgs.msg import GuidanceCmd
 from enum import Enum
 
@@ -88,6 +88,9 @@ class DroneManagerReal(Node):
         self.guidance_cmd     = None
         self._last_hold_pos   = np.zeros(3)  # position when target was last lost
 
+        # Mode change trigger
+        self.trigger_msg = False
+
         # ── Publishers ──
         self.ocm_pub = self.create_publisher(
             OffboardControlMode,
@@ -105,6 +108,7 @@ class DroneManagerReal(Node):
             qos_profile_sensor_data,
         )
         self.state_pub = self.create_publisher(String, '/mission_state', 10)
+        self.trigger_pub = self.create_publisher(Uint32, '/tracking_trigger', qos_profile_sensor_data)
 
         # ── Subscribers ──
         self.create_subscription(
@@ -126,12 +130,19 @@ class DroneManagerReal(Node):
             10,
         )
 
+        self.trigger_subscriber_ = self.create_subscription(
+            Uint32,
+            f'/tracking_trigger',
+            self.trigger_callback,
+            qos_profile_sensor_data
+        )
+
         # ── Timers ──
         self.create_timer(0.1,  self.ocm_cb)      # 10 Hz offboard heartbeat
         self.create_timer(0.02, self.control_cb)   # 50 Hz main control
 
         self.get_logger().info(
-            f'DroneManagerReal started: INIT -> HOVER_INIT ({self.hover_init_dur}s) -> TRACKING'
+            f'drone{self.system_id} mode HOVER_INIT -> TRACKING'
         )
 
     # ── Callbacks ──
@@ -153,8 +164,17 @@ class DroneManagerReal(Node):
     def guidance_cmd_cb(self, msg: GuidanceCmd):
         self.guidance_cmd = msg
 
+    def trigger_callback(self, msg: Uint32):
+        if msg.data == self.system_id:
+            self.trigger_msg = True
+        else:
+            self.trigger_msg = False
+
     # ── Offboard heartbeat (10Hz) ──
     def ocm_cb(self):
+        if not self.trigger_msg:
+            return
+
         msg = OffboardControlMode()
         if self.state == State.TRACKING and self.guidance_cmd is not None \
                 and self.guidance_cmd.target_detected:
@@ -185,6 +205,9 @@ class DroneManagerReal(Node):
     def _init(self):
         """Wait for position data, send position hold, request OFFBOARD."""
         if not self.pos_received:
+            return
+
+        if not self.trigger_msg:
             return
 
         # Always publish position hold at captured position
@@ -228,6 +251,8 @@ class DroneManagerReal(Node):
 
     def _tracking(self):
         """Follow PNG guidance when target detected, hold position otherwise."""
+        self.trigger_pub.publish(Uint32(data=(self.system_id+1)))
+
         if self.guidance_cmd is not None and self.guidance_cmd.target_detected:
             # Velocity control from PNG
             cmd = self.guidance_cmd
@@ -277,7 +302,6 @@ class DroneManagerReal(Node):
         msg.source_system, msg.source_component, msg.from_external = 1, 1, True
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.cmd_pub.publish(msg)
-
 
 def main(args=None):
     rclpy.init(args=args)

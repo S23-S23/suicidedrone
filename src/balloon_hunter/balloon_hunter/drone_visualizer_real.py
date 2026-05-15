@@ -30,10 +30,8 @@ _STATE_COLOR = {
     'TRACKING':   (0.0, 1.0, 0.0),
 }
 
-
 def ned_to_enu(x_ned, y_ned, z_ned):
     return y_ned, x_ned, -z_ned
-
 
 def ned_yaw_to_enu_quat(ned_yaw_rad: float) -> Quaternion:
     enu_yaw = math.pi / 2.0 - ned_yaw_rad
@@ -43,7 +41,6 @@ def ned_yaw_to_enu_quat(ned_yaw_rad: float) -> Quaternion:
     q.z = math.sin(enu_yaw / 2.0)
     q.w = math.cos(enu_yaw / 2.0)
     return q
-
 
 class DroneVisualizerReal(Node):
     def __init__(self):

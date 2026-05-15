@@ -7,7 +7,7 @@ find_package(mavlink_vendor REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
-# Added by TYK
+
 find_package(px4_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
@@ -15,7 +15,6 @@ ament_export_include_directories(${mavlink_vendor_INCLUDE_DIRS})
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SwarmComm.msg"
-  #Fixed by TYK
   "msg/PosYaw.msg"
   DEPENDENCIES std_msgs
 )
@@ -65,17 +64,27 @@ target_link_libraries(serial_comm_node
   serial_comm_node_lib
 )
 
-# ========== Added by TYK ==========#
 add_executable(pos_yaw_receiver_node
   src/pos_yaw_receiver_node.cpp
 )
 ament_target_dependencies(pos_yaw_receiver_node
   rclcpp
+  std_msgs
 )
 target_link_libraries(pos_yaw_receiver_node
   ${typesupport_target}
 )
-# =================================#
+
+add_executable(pso_yaw_send_node
+  src/pso_yaw_send_node.cpp
+)
+ament_target_dependencies(pso_yaw_send_node
+  rclcpp
+  std_msgs
+)
+target_link_libraries(pso_yaw_send_node
+  ${typesupport_target}
+)
 
 # Install
 install(TARGETS
