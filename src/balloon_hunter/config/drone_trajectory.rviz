@@ -35,26 +35,100 @@ Visualization Manager:
         All Enabled: true
       Marker Scale: 1
 
+    # ── Drone 1 (green / yellow) ──────────────────────────────────────────────
     - Class: rviz_default_plugins/Marker
-      Name: GT Trajectory (green)
+      Name: D1 GT Trajectory (green)
       Enabled: true
       Value: true
       Topic:
-        Value: /drone/gt_trajectory
+        Value: /drone1/gt_trajectory
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
 
     - Class: rviz_default_plugins/Marker
-      Name: PX4 Trajectory (yellow)
+      Name: D1 PX4 Trajectory (yellow)
       Enabled: true
       Value: true
       Topic:
-        Value: /drone/px4_trajectory
+        Value: /drone1/px4_trajectory
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
 
+    - Class: rviz_default_plugins/Marker
+      Name: D1 State Text
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone1/state_text
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    # ── Drone 2 (cyan / orange) ───────────────────────────────────────────────
+    - Class: rviz_default_plugins/Marker
+      Name: D2 GT Trajectory (cyan)
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone2/gt_trajectory
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    - Class: rviz_default_plugins/Marker
+      Name: D2 PX4 Trajectory (orange)
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone2/px4_trajectory
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    - Class: rviz_default_plugins/Marker
+      Name: D2 State Text
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone2/state_text
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    # ── Drone 3 (magenta / purple) ────────────────────────────────────────────
+    - Class: rviz_default_plugins/Marker
+      Name: D3 GT Trajectory (magenta)
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone3/gt_trajectory
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    - Class: rviz_default_plugins/Marker
+      Name: D3 PX4 Trajectory (purple)
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone3/px4_trajectory
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    - Class: rviz_default_plugins/Marker
+      Name: D3 State Text
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /drone3/state_text
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+
+    # ── Shared ────────────────────────────────────────────────────────────────
     - Class: rviz_default_plugins/Marker
       Name: Balloon Marker
       Enabled: true
@@ -64,50 +138,6 @@ Visualization Manager:
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
-
-    - Class: rviz_default_plugins/Marker
-      Name: Mission State Text
-      Enabled: true
-      Value: true
-      Topic:
-        Value: /drone/state_text
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-
-    - Class: rviz_default_plugins/Image
-      Name: IBVS Debug Image
-      Enabled: true
-      Value: true
-      Topic:
-        Value: /ibvs/debug_image
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-      Max Value: 1
-      Median window: 5
-      Min Value: 0
-      Normalize Range: true
-
-    - Class: rviz_default_plugins/Pose
-      Name: Drone Pose
-      Enabled: true
-      Value: true
-      Topic:
-        Value: /drone/pose
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-      Shape:
-        Alpha: 1
-        Axes Length: 1
-        Axes Radius: 0.1
-        Color: 0; 170; 255
-        Head Length: 0.3
-        Head Radius: 0.15
-        Shaft Length: 0.5
-        Shaft Radius: 0.05
-        Value: Arrow
 
   Global Options:
     Background Color: 48; 48; 48

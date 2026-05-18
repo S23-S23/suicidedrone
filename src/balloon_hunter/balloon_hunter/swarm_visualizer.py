@@ -77,6 +77,7 @@ class _DroneState:
         self.gt_points:  list[Point] = []
         self.px4_points: list[Point] = []
         self.enu         = (0.0, 0.0, 0.0)
+        self.head        = 0.0
         self.mission_state = 'IDLE'
 
         colors = _DRONE_COLORS.get(system_id, _DRONE_COLORS[1])
@@ -148,37 +149,8 @@ class SwarmVisualizer(Node):
     #  PX4 Monitoring → TF + PX4 trajectory                               #
     # ------------------------------------------------------------------ #
     def _monitoring_cb(self, msg: Monitoring, state: _DroneState):
-        now = self.get_clock().now().to_msg()
-        x_enu, y_enu, z_enu = ned_to_enu(msg.pos_x, msg.pos_y, msg.pos_z)
-        state.enu = (x_enu, y_enu, z_enu)
-        quat = ned_yaw_to_enu_quat(msg.head)
-
-        # TF: map -> drone{N}
-        tf_msg = TransformStamped()
-        tf_msg.header.stamp             = now
-        tf_msg.header.frame_id          = self.frame_id
-        tf_msg.child_frame_id           = state.drone_frame
-        tf_msg.transform.translation.x  = float(x_enu)
-        tf_msg.transform.translation.y  = float(y_enu)
-        tf_msg.transform.translation.z  = float(z_enu)
-        tf_msg.transform.rotation       = quat
-        self.tf_broadcaster.sendTransform(tf_msg)
-
-        # PX4 trajectory
-        pt = Point()
-        pt.x, pt.y, pt.z = float(x_enu), float(y_enu), float(z_enu)
-        state.px4_points.append(pt)
-        if len(state.px4_points) > state.max_points:
-            state.px4_points.pop(0)
-
-        self._publish_line_strip(
-            state.px4_pub, state.px4_points,
-            ns=f'px4_{state.system_id}',
-            marker_id=state.system_id,
-            color=state.px4_color,
-            line_width=0.12,
-        )
-        self._publish_state_marker(state)
+        # PX4에서는 헤딩만 사용; 위치는 Gazebo GT를 사용
+        state.head = msg.head
 
     # ------------------------------------------------------------------ #
     #  Mission state                                                        #
@@ -203,7 +175,7 @@ class SwarmVisualizer(Node):
         marker.pose.position.y    = y
         marker.pose.position.z    = z + 1.5
         marker.pose.orientation.w = 1.0
-        marker.scale.z            = 3.0
+        marker.scale.z            = 0.3
         marker.color.r            = r
         marker.color.g            = g
         marker.color.b            = b
@@ -219,13 +191,31 @@ class SwarmVisualizer(Node):
     def _model_states_cb(self, msg: ModelStates):
         now = self.get_clock().now().to_msg()
 
+        # GT 위치 + PX4 헤딩으로 TF broadcast 및 GT trajectory 발행
         for sid, state in self._drones.items():
             if state.model_name not in msg.name:
                 continue
             idx = msg.name.index(state.model_name)
             p   = msg.pose[idx].position
+            x_enu = float(p.x)
+            y_enu = float(p.y)
+            z_enu = float(p.z)
+            state.enu = (x_enu, y_enu, z_enu)
+
+            # TF: map -> drone{N}  (위치=GT, 헤딩=PX4)
+            quat = ned_yaw_to_enu_quat(state.head)
+            tf_msg = TransformStamped()
+            tf_msg.header.stamp             = now
+            tf_msg.header.frame_id          = self.frame_id
+            tf_msg.child_frame_id           = state.drone_frame
+            tf_msg.transform.translation.x  = x_enu
+            tf_msg.transform.translation.y  = y_enu
+            tf_msg.transform.translation.z  = z_enu
+            tf_msg.transform.rotation       = quat
+            self.tf_broadcaster.sendTransform(tf_msg)
+
             pt  = Point()
-            pt.x, pt.y, pt.z = float(p.x), float(p.y), float(p.z)
+            pt.x, pt.y, pt.z = x_enu, y_enu, z_enu
             state.gt_points.append(pt)
             if len(state.gt_points) > state.max_points:
                 state.gt_points.pop(0)
@@ -236,6 +226,7 @@ class SwarmVisualizer(Node):
                 color=state.gt_color,
                 line_width=0.12,
             )
+            self._publish_state_marker(state)
 
         # Balloon sphere
         if self.balloon_model_name not in msg.name:

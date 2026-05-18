@@ -102,9 +102,10 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 #  spawn_x, spawn_y, spawn_z, spawn_yaw_rad, dds_port,
 #  search_n, search_e, az_bias_deg)
 DRONE_CONFIGS = [
-    (1, 4560, 14560, 0,  0.0,  0.0,  0.1, 1.344, 8888,  7.0,  1.5,  0.0),
-    (2, 4561, 14561, 1, -2.0, -2.5,  0.1, 1.258, 8889,  6.0,  0.0,  0.0),
-    (3, 4562, 14562, 2,  2.0, -2.5,  0.1, 1.507, 8890,  6.0,  3.0,  0.0),
+    #                                                          search_n  search_e  az_bias_deg
+    (1, 4560, 14560, 0,  0.0,  0.0,  0.1, 1.344, 8888,  7.0,   1.5,  0.0),
+    (2, 4561, 14561, 1, -2.0, -2.5,  0.1, 1.258, 8889,  5.0,  -2.0,  0.0),  # flanked left
+    (3, 4562, 14562, 2,  2.0, -2.5,  0.1, 1.507, 8890,  5.0,   2.0,  0.0),  # flanked right
 ]
 
 # FRDB + IACG parameters shared by all PNG nodes.
@@ -112,7 +113,7 @@ IACG_PARAMS = {
     'r0':               15.0,   # initial assumed range [m]
     'bias_decay_alpha':  1.0,   # 1 = linear decay; 0.5 = fast early; 2 = late snap
     'leader_id':         1,     # drone that broadcasts LOS direction
-    'bias_gain_K':       3.0,   # amplification factor for geometric angle
+    'bias_gain_K':       3.0,   # amplification factor for geometric angle (~38° effective bias)
 }
 
 
@@ -326,7 +327,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'target_name': 'target_balloon',
-            'nominal_x': 2.0, 'nominal_y': 10.0, 'nominal_z': 5.0,
+            'nominal_x': 0.0, 'nominal_y': 10.0, 'nominal_z': 5.0,
             'amplitude': 0.0, 'speed': 0.0,
             'balloon_link_z_offset': 1.5,
         }]
@@ -449,7 +450,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     )
 
-    timed_target_mover = TimerAction(period=13.0, actions=[target_mover])
+    #timed_target_mover = TimerAction(period=13.0, actions=[target_mover])
     timed_mission      = TimerAction(period=30.0, actions=[*all_mission_nodes, swarm_visualizer])
     timed_swarm_start  = TimerAction(period=35.0, actions=[swarm_start])
 
@@ -471,7 +472,7 @@ def launch_setup(context, *args, **kwargs):
         *sdf_gens,
         *timed_spawns,
         *timed_px4,
-        timed_target_mover,
+        #timed_target_mover,
         timed_mission,
         timed_swarm_start,
         *bag_actions,
