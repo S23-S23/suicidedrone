@@ -24,6 +24,7 @@ Publications:
   /mission_state                        — String (state name for other nodes)
 """
 
+import math
 import os
 import signal
 import time
@@ -63,6 +64,22 @@ class DroneManager(Node):
         self.declare_parameter('collision_distance', 2.0)
         self.declare_parameter('mission_timeout', 60.0)
         self.declare_parameter('max_speed', 10.0)
+        # Per-drone NED search waypoint: fly here during SEARCH until target detected.
+        # Must differ per drone in swarm to avoid all converging on the same point.
+        self.declare_parameter('search_target_n', 5.0)
+        self.declare_parameter('search_target_e', 0.0)
+        # Proximity gate: drone stays in SEARCH until within this radius of the
+        # search waypoint, even if the target is already detected.
+        # Prevents flanking drones (2, 3) from intercepting before reaching their
+        # pre-planned azimuth position.  Set to 0.0 to disable (drone1 default).
+        self.declare_parameter('search_arrival_dist', 3.0)
+        # Balloon NED position — used to yaw toward the target during SEARCH so
+        # the camera faces the balloon when the drone arrives at the flanking waypoint.
+        self.declare_parameter('balloon_ned_n', 13.0)
+        self.declare_parameter('balloon_ned_e',  3.0)
+        # Auto-start delay [s]. Set to a large value in swarm launches to disable
+        # the self-start timer and rely on /swarm/start instead.
+        self.declare_parameter('start_delay_s', 5.0)
 
         self.system_id              = self.get_parameter('system_id').value
         self.takeoff_height         = self.get_parameter('takeoff_height').value
@@ -70,8 +87,14 @@ class DroneManager(Node):
         self.collision_dist         = self.get_parameter('collision_distance').value
         self.mission_timeout        = self.get_parameter('mission_timeout').value
         self.max_speed              = self.get_parameter('max_speed').value
+        self.search_target_n        = self.get_parameter('search_target_n').value
+        self.search_target_e        = self.get_parameter('search_target_e').value
+        self.search_arrival_dist    = self.get_parameter('search_arrival_dist').value
+        self.balloon_ned_n          = self.get_parameter('balloon_ned_n').value
+        self.balloon_ned_e          = self.get_parameter('balloon_ned_e').value
+        self.start_delay_s          = self.get_parameter('start_delay_s').value
 
-        self.topic_prefix = f"drone{self.system_id}/fmu/"
+        self.topic_prefix = f"/drone{self.system_id}/fmu/"
 
         self.get_logger().info(f'DroneManager {self.system_id} initializing...')
 
@@ -105,7 +128,7 @@ class DroneManager(Node):
             f'{self.topic_prefix}in/vehicle_command',
             qos_profile_sensor_data,
         )
-        self.state_pub = self.create_publisher(String, '/mission_state', 10)
+        self.state_pub = self.create_publisher(String, 'mission_state', 10)
 
         # ── Subscribers ──
         self.create_subscription(
@@ -122,7 +145,7 @@ class DroneManager(Node):
         )
         self.create_subscription(
             GuidanceCmd,
-            '/png/guidance_cmd',
+            'png/guidance_cmd',
             self.guidance_cmd_cb,
             10,
         )
@@ -130,11 +153,15 @@ class DroneManager(Node):
             Point, '/target_world_pos',
             self.target_pos_cb, 10
         )
+        self.create_subscription(
+            String, '/swarm/start',
+            self._swarm_start_cb, 10
+        )
 
         # ── Timers ──
         self.create_timer(0.1,  self.ocm_cb)          # 10 Hz offboard heartbeat
         self.create_timer(0.02, self.control_cb)       # 50 Hz main control
-        self.create_timer(5.0,  self.start_mission)    # one-shot
+        self.create_timer(self.start_delay_s, self.start_mission)  # auto-start
 
         self.get_logger().info('DroneManager started: IDLE -> TAKEOFF -> SEARCH -> INTERCEPT -> DONE')
 
@@ -150,11 +177,23 @@ class DroneManager(Node):
     def guidance_cmd_cb(self, msg: GuidanceCmd):
         self.guidance_cmd = msg
 
-        # SEARCH -> INTERCEPT when target detected
+        # SEARCH -> INTERCEPT when target detected AND within proximity gate
         if msg.target_detected and self.state == State.SEARCH:
-            self.get_logger().info('Target detected! SEARCH -> INTERCEPT')
-            self._mission_start_t = time.time()
-            self.state = State.INTERCEPT
+            search_wp = np.array([self.search_target_n, self.search_target_e,
+                                  -self.takeoff_height])
+            dist_to_wp = np.linalg.norm(self.drone_pos - search_wp)
+            if self.search_arrival_dist <= 0.0 or dist_to_wp < self.search_arrival_dist:
+                self.get_logger().info(
+                    f'Target detected at wp_dist={dist_to_wp:.1f}m -> INTERCEPT'
+                )
+                self._mission_start_t = time.time()
+                self.state = State.INTERCEPT
+            else:
+                self.get_logger().info(
+                    f'Target detected but not at flanking wp yet '
+                    f'({dist_to_wp:.1f}m > {self.search_arrival_dist:.1f}m), holding SEARCH',
+                    throttle_duration_sec=2.0,
+                )
 
         # INTERCEPT -> SEARCH when target lost
         if not msg.target_detected and self.state == State.INTERCEPT:
@@ -166,7 +205,12 @@ class DroneManager(Node):
 
     def start_mission(self):
         if self.state == State.IDLE:
-            self.get_logger().info('Mission start -> TAKEOFF')
+            self.get_logger().info('Mission start (auto-timer) -> TAKEOFF')
+            self.state = State.TAKEOFF
+
+    def _swarm_start_cb(self, msg: String):
+        if self.state == State.IDLE:
+            self.get_logger().info(f'Swarm start received ({msg.data!r}) -> TAKEOFF')
             self.state = State.TAKEOFF
 
     # ── Offboard heartbeat (10Hz) ──
@@ -201,21 +245,32 @@ class DroneManager(Node):
 
     # ── State handlers ──
     def _idle(self):
+        """Hold ground position and pre-arm so all drones are ready before /swarm/start."""
+        now = self.get_clock().now().nanoseconds / 1e9
         safe_z = max(self.drone_pos[2], -0.1)
         self._pub_pos([self.drone_pos[0], self.drone_pos[1], safe_z])
+
+        # Pre-arm during IDLE: by the time /swarm/start fires, every drone is
+        # already armed + in offboard mode → simultaneous climb on the signal.
+        if self.arming_state != VehicleStatus.ARMING_STATE_ARMED:
+            if now - self.last_cmd_time > 1.0:
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+                self.get_logger().info('Pre-arm: ARM requested')
+                self.last_cmd_time = now
+        elif self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            if now - self.last_cmd_time > 1.0:
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+                self.get_logger().info('Pre-arm: OFFBOARD requested')
+                self.last_cmd_time = now
 
     def _takeoff(self):
         alt = -self.takeoff_height
         now = self.get_clock().now().nanoseconds / 1e9
 
-        if self.arming_state != VehicleStatus.ARMING_STATE_ARMED or \
-           self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+        # Safety net: finish arming if pre-arm didn't complete before the signal.
+        if self.arming_state != VehicleStatus.ARMING_STATE_ARMED:
             safe_z = max(self.drone_pos[2], -0.1)
             self._pub_pos([self.drone_pos[0], self.drone_pos[1], safe_z])
-        else:
-            self._pub_pos([self.drone_pos[0], self.drone_pos[1], alt])
-
-        if self.arming_state != VehicleStatus.ARMING_STATE_ARMED:
             if now - self.last_cmd_time > 1.0:
                 self._pub_cmd(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
                 self.get_logger().info('ARM requested')
@@ -223,19 +278,23 @@ class DroneManager(Node):
             return
 
         if self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            safe_z = max(self.drone_pos[2], -0.1)
+            self._pub_pos([self.drone_pos[0], self.drone_pos[1], safe_z])
             if now - self.last_cmd_time > 1.0:
                 self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
                 self.get_logger().info('OFFBOARD requested')
                 self.last_cmd_time = now
             return
 
+        # Armed + offboard → climb.
+        self._pub_pos([self.drone_pos[0], self.drone_pos[1], alt])
         if abs(self.drone_pos[2] - alt) < 0.3:
             self.get_logger().info('Takeoff complete -> SEARCH')
             self.forward_start_pos = self.drone_pos.copy()
             self.state = State.SEARCH
 
     def _search(self):
-        """Fly forward until target is detected (via guidance_cmd_cb)."""
+        """Fly to search_target_n/e (flanking waypoint), yawing toward balloon throughout."""
         if self.forward_start_pos is None:
             self.forward_start_pos = self.drone_pos.copy()
 
@@ -251,8 +310,15 @@ class DroneManager(Node):
             )
             return
 
-        # Fly forward (positive X in NED)
-        self._pub_pos([5.0, 0.0, -self.takeoff_height])
+        # Yaw toward balloon so the camera is already facing it at the flanking waypoint.
+        yaw_to_balloon = math.atan2(
+            self.balloon_ned_e - self.drone_pos[1],
+            self.balloon_ned_n - self.drone_pos[0],
+        )
+        self._pub_pos(
+            [self.search_target_n, self.search_target_e, -self.takeoff_height],
+            yaw=yaw_to_balloon,
+        )
 
     def _intercept(self):
         """Velocity control using PNG GuidanceCmd."""

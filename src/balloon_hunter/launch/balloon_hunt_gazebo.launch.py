@@ -214,7 +214,7 @@ def launch_setup(context, *args, **kwargs):
             'system_id': drone_id,
             'takeoff_height': 6.0,
             'forward_distance_limit': 50.0,
-            'collision_distance': 2.0,
+            'collision_distance': 1.5,
             'mission_timeout': 60.0,
             'max_speed': 10.0,
         }]
@@ -369,7 +369,7 @@ def launch_setup(context, *args, **kwargs):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('px4_src_path', default_value='/home/kiki/PX4Swarm'),
+        DeclareLaunchArgument('px4_src_path', default_value='/home/a/PX4Swarm'),
         DeclareLaunchArgument(
             'model_path',
             default_value=os.path.join(

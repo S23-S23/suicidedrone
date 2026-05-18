@@ -82,7 +82,7 @@ class BalloonDetector(Node):
         )
 
         # Publishers
-        self.target_pub = self.create_publisher(TargetInfo, '/target_info', 10)
+        self.target_pub = self.create_publisher(TargetInfo, 'target_info', 10)
 
         self.img_pub = self.create_publisher(
             Image,

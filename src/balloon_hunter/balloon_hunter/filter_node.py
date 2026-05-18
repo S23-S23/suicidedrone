@@ -388,7 +388,7 @@ class FilterNode(Node):
         dkf_delay         = self.get_parameter('dkf_delay_steps').value
         assumed_depth     = self.get_parameter('assumed_depth').value
 
-        self.topic_prefix = f"drone{self.system_id}/fmu/"
+        self.topic_prefix = f"/drone{self.system_id}/fmu/"
 
         # ── Camera frame transform (iris depth camera) ──
         self.R_b_c = np.array([
@@ -430,7 +430,7 @@ class FilterNode(Node):
         self.mission_state = 'IDLE'
 
         # ── Publishers ──
-        self.est_pub = self.create_publisher(Float32MultiArray, '/filter_estimate', 10)
+        self.est_pub = self.create_publisher(Float32MultiArray, 'filter_estimate', 10)
 
         # ── Subscribers ──
         self.create_subscription(
@@ -450,11 +450,11 @@ class FilterNode(Node):
             self.accel_cb, qos_profile_sensor_data
         )
         self.create_subscription(
-            TargetInfo, '/target_info',
+            TargetInfo, 'target_info',
             self.det_cb, 10
         )
         self.create_subscription(
-            String, '/mission_state',
+            String, 'mission_state',
             self.state_cb, 10
         )
 
@@ -538,7 +538,9 @@ class FilterNode(Node):
                     omega_body=self.drone_omega,
                     accel_body=self.drone_accel,
                 )
-            est = self.filt.get_pixel()
+                est = self.filt.get_pixel()
+            else:
+                est = None  # YOLO 소실 시 퍼블리시 중단 → IBVS timeout → PNG 정지
 
         if est is not None and active:
             _F32 = 3.4028234e+38

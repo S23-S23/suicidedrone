@@ -153,7 +153,7 @@ class GtBalloonDetector(Node):
         self.create_subscription(LinkStates,  '/gazebo/link_states',  self.link_states_callback,  10)
 
         # --- Publishers (identical topics/types to balloon_detector) --------
-        self.target_pub = self.create_publisher(TargetInfo, '/target_info', 10)
+        self.target_pub = self.create_publisher(TargetInfo, 'target_info', 10)
         self.img_pub    = self.create_publisher(Image,           f'/inference_result_{sid}',  10)
         self.pos_pub    = self.create_publisher(Point,           '/target_world_pos',         10)
 

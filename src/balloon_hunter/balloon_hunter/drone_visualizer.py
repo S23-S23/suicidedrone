@@ -8,7 +8,7 @@ Publishes to RViz2 / Foxglove:
   - Marker LINE_STRIP (yellow): PX4 estimated trajectory   (/drone/px4_trajectory)
   - Marker SPHERE:              balloon target              (/balloon/marker)
   - Marker TEXT_VIEW_FACING:    mission state label         (/drone/state_text)
-  - sensor_msgs/Image:          IBVS debug overlay image    (/ibvs/debug_image)
+  - sensor_msgs/Image:          IBVS debug overlay image    (ibvs/debug_image)
 """
 
 import math
@@ -21,7 +21,7 @@ from cv_bridge import CvBridge
 from px4_msgs.msg import Monitoring
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Quaternion
-from std_msgs.msg import String, Bool
+from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
 from tf2_ros import TransformBroadcaster
@@ -90,7 +90,7 @@ class DroneVisualizer(Node):
         self.frame_id        = 'map'
         self.drone_frame     = f'drone{system_id}'
         self.drone_model_name = f'drone{system_id}'
-        monitoring_topic     = f'drone{system_id}/fmu/out/monitoring'
+        monitoring_topic     = f'/drone{system_id}/fmu/out/monitoring'
 
         # TF broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -102,7 +102,7 @@ class DroneVisualizer(Node):
         self.px4_traj_pub   = self.create_publisher(Marker,      '/drone/px4_trajectory', 10)
         self.balloon_pub    = self.create_publisher(Marker,      '/balloon/marker',       10)
         self.state_text_pub = self.create_publisher(Marker,      '/drone/state_text',     10)
-        self.debug_img_pub  = self.create_publisher(Image,       '/ibvs/debug_image',     10)
+        self.debug_img_pub  = self.create_publisher(Image,       'ibvs/debug_image',      10)
 
         # Accumulated trajectory point lists (ENU)
         self.gt_points:  list[Point] = []   # Gazebo ground truth
@@ -111,7 +111,7 @@ class DroneVisualizer(Node):
         # Current drone ENU position (from Monitoring, used for state marker placement)
         self.drone_enu = (0.0, 0.0, 0.0)
         self.mission_state = 'IDLE'
-        self.balloon_hit = False   # turns balloon marker blue on collision
+        self.balloon_hit = False
 
         # Debug image state
         self._latest_img    = None   # raw camera image
@@ -133,14 +133,8 @@ class DroneVisualizer(Node):
         )
         self.create_subscription(
             String,
-            '/mission_state',
+            'mission_state',
             self.mission_state_callback,
-            10,
-        )
-        self.create_subscription(
-            Bool,
-            '/balloon_collision',
-            self._collision_callback,
             10,
         )
         self.create_subscription(
@@ -151,13 +145,13 @@ class DroneVisualizer(Node):
         )
         self.create_subscription(
             IBVSOutput,
-            '/ibvs/output',
+            'ibvs/output',
             self._ibvs_callback,
             10,
         )
         self.create_subscription(
             TargetInfo,
-            '/target_info',
+            'target_info',
             self._target_callback,
             10,
         )
@@ -182,11 +176,6 @@ class DroneVisualizer(Node):
 
     def _target_callback(self, msg: TargetInfo):
         self._latest_target = msg
-
-    def _collision_callback(self, msg: Bool):
-        if msg.data:
-            self.balloon_hit = True
-            self.get_logger().info('Balloon hit — marker changed to blue')
 
     # ----------------------------------------------------------------------- #
     #  PX4 Monitoring — pose + TF + yellow PX4 trajectory                       #

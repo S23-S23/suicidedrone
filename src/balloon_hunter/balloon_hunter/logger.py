@@ -57,12 +57,17 @@ class FilterLogger(Node):
         self.declare_parameter('target_gazebo_x', 0.0)
         self.declare_parameter('target_gazebo_y', 5.0)
         self.declare_parameter('target_gazebo_z', 2.0)
+        # Drone spawn position in Gazebo ENU (x=East, y=North).
+        # PX4 SITL uses spawn as local NED origin, so target NED must be offset
+        # by spawn to stay in the same local frame as drone_pos.
+        self.declare_parameter('spawn_gazebo_x', 0.0)
+        self.declare_parameter('spawn_gazebo_y', 0.0)
         self.declare_parameter('fx', 454.8)
         self.declare_parameter('fy', 454.8)
         self.declare_parameter('cx', 424.0)
         self.declare_parameter('cy', 240.0)
         self.declare_parameter('cam_pitch_deg', 0.0)
-        self.declare_parameter('detection_topic', '/target_info')
+        self.declare_parameter('detection_topic', 'target_info')
         self.declare_parameter('collision_distance', 1.0)
 
         self.filter_type = self.get_parameter('filter_type').value.upper()
@@ -75,14 +80,23 @@ class FilterLogger(Node):
         self.foc = self.fx
         self.collision_dist = self.get_parameter('collision_distance').value
 
-        prefix = f'drone{self.system_id}/fmu/out/'
+        prefix = f'/drone{self.system_id}/fmu/out/'
 
-        # Fallback static target position (NED)
+        # Spawn offset: Gazebo ENU (x=East, y=North) → NED (N=y, E=x).
+        # PX4 SITL uses the spawn position as local NED origin, so all positions
+        # reported by PX4 are relative to spawn. The target must be expressed in
+        # the same local frame: target_local_ned = target_absolute_ned - spawn_ned.
+        spawn_gz_x = self.get_parameter('spawn_gazebo_x').value  # East
+        spawn_gz_y = self.get_parameter('spawn_gazebo_y').value  # North
+        self.spawn_ned_n = spawn_gz_y   # NED North = Gazebo Y (North)
+        self.spawn_ned_e = spawn_gz_x   # NED East  = Gazebo X (East)
+
+        # Fallback static target position in local NED
         gz_x = self.get_parameter('target_gazebo_x').value
         gz_y = self.get_parameter('target_gazebo_y').value
         gz_z = self.get_parameter('target_gazebo_z').value
-        # Gazebo ENU: X=East, Y=North, Z=Up → PX4 NED: X=North, Y=East, Z=Down
-        self.target_ned = np.array([gz_y, gz_x, -gz_z])
+        # Gazebo ENU: X=East, Y=North, Z=Up → local NED: subtract spawn offset
+        self.target_ned = np.array([gz_y - self.spawn_ned_n, gz_x - self.spawn_ned_e, -gz_z])
         self._target_from_topic = False
 
         # Camera body→camera rotation
@@ -115,7 +129,7 @@ class FilterLogger(Node):
         log_dir = os.path.expanduser('~/dkf_logs')
         os.makedirs(log_dir, exist_ok=True)
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.csv_path = os.path.join(log_dir, f'log_{ts}_{self.filter_type}.csv')
+        self.csv_path = os.path.join(log_dir, f'log_{ts}_drone{self.system_id}_{self.filter_type}.csv')
         self.csv_file = open(self.csv_path, 'w', newline='')
         self.w = csv.writer(self.csv_file)
         self.w.writerow([
@@ -162,7 +176,7 @@ class FilterLogger(Node):
             self.det_cb, 10
         )
         self.create_subscription(
-            Float32MultiArray, '/filter_estimate',
+            Float32MultiArray, 'filter_estimate',
             self.est_cb, 10
         )
         self.create_subscription(
@@ -170,7 +184,7 @@ class FilterLogger(Node):
             self.target_cb, 10
         )
         self.create_subscription(
-            String, '/mission_state',
+            String, 'mission_state',
             self.state_cb, 10
         )
 
@@ -223,8 +237,8 @@ class FilterLogger(Node):
     def target_cb(self, msg: Point):
         """Receive target world position from /target_world_pos (Gazebo ENU)."""
         self.target_world = np.array([msg.x, msg.y, msg.z])
-        # Gazebo ENU: X=East, Y=North, Z=Up → PX4 NED: X=North, Y=East, Z=Down
-        self.target_ned = np.array([msg.y, msg.x, -msg.z])
+        # Gazebo ENU → local NED: subtract spawn offset so distances match drone_pos frame
+        self.target_ned = np.array([msg.y - self.spawn_ned_n, msg.x - self.spawn_ned_e, -msg.z])
         self._target_from_topic = True
 
     def state_cb(self, msg: String):

@@ -92,25 +92,25 @@ class IBVSController(Node):
         # ── Subscriptions ───────────────────────────────────────────────────
         self.create_subscription(
             Float32MultiArray,
-            '/filter_estimate',
+            'filter_estimate',
             self.filter_callback,
             10,
         )
         self.create_subscription(
             VehicleAttitude,
-            f'drone{system_id}/fmu/out/vehicle_attitude',
+            f'/drone{system_id}/fmu/out/vehicle_attitude',
             self.attitude_callback,
             qos_profile_sensor_data,
         )
         self.create_subscription(
             VehicleAngularVelocity,
-            f'drone{system_id}/fmu/out/vehicle_angular_velocity',
+            f'/drone{system_id}/fmu/out/vehicle_angular_velocity',
             self.angular_velocity_callback,
             qos_profile_sensor_data,
         )
 
         # ── Publishers ──────────────────────────────────────────────────────
-        self.pub_ibvs = self.create_publisher(IBVSOutput, '/ibvs/output', 10)
+        self.pub_ibvs = self.create_publisher(IBVSOutput, 'ibvs/output', 10)
 
         # Timeout checker at 10 Hz
         self.create_timer(0.1, self._timeout_check)
