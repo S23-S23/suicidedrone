@@ -259,26 +259,9 @@ def make_drone_nodes(context, drone_id, filter_type, detector_type, model_path,
         }]
     )
 
-    visualizer_node = Node(
-        namespace=ns,
-        package='balloon_hunter',
-        executable='drone_visualizer',
-        name='drone_visualizer',
-        output='screen',
-        parameters=[{
-            **base_params,
-            'max_path_points': 5000,
-            'balloon_model_name': 'target_balloon',
-            'balloon_radius': 0.3,
-            'balloon_link_z_offset': 1.5,
-            'fx': 454.8, 'fy': 454.8, 'cx': 424.0, 'cy': 240.0,
-            'camera_topic': f'/{ns}/camera/image_raw',
-        }]
-    )
-
     return [
         detector_node, filter_node, ibvs_node,
-        png_node, manager_node, logger_node, visualizer_node,
+        png_node, manager_node, logger_node,
     ]
 
 
@@ -345,6 +328,22 @@ def launch_setup(context, *args, **kwargs):
             'target_name': 'target_balloon',
             'nominal_x': 2.0, 'nominal_y': 10.0, 'nominal_z': 5.0,
             'amplitude': 0.0, 'speed': 0.0,
+            'balloon_link_z_offset': 1.5,
+        }]
+    )
+
+    # ── Single swarm visualizer (all 3 drones, color-coded trajectories) ──
+    swarm_visualizer = Node(
+        package='balloon_hunter',
+        executable='swarm_visualizer',
+        name='swarm_visualizer',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'system_ids': [cfg[0] for cfg in DRONE_CONFIGS],
+            'max_path_points': 5000,
+            'balloon_model_name': 'target_balloon',
+            'balloon_radius': 0.3,
             'balloon_link_z_offset': 1.5,
         }]
     )
@@ -451,7 +450,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     timed_target_mover = TimerAction(period=13.0, actions=[target_mover])
-    timed_mission      = TimerAction(period=30.0, actions=all_mission_nodes)
+    timed_mission      = TimerAction(period=30.0, actions=[*all_mission_nodes, swarm_visualizer])
     timed_swarm_start  = TimerAction(period=35.0, actions=[swarm_start])
 
     # ── ros2 bag (optional) ──
