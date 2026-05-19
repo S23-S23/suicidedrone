@@ -55,6 +55,7 @@ setup(
             'gt_balloon_detector = balloon_hunter.gt_balloon_detector:main',
             'drone_visualizer = balloon_hunter.drone_visualizer:main',
             'swarm_visualizer = balloon_hunter.swarm_visualizer:main',
+            'swarm_coordinator = balloon_hunter.swarm_coordinator:main',
         ],
     },
 )

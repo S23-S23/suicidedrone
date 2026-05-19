@@ -357,7 +357,7 @@ class PNGGuidance(Node):
 
         # Effective azimuth bias
         if self._is_follower:
-            az_bias_eff = self._compute_dynamic_az_bias()
+            az_bias_eff = self._compute_dynamic_az_bias() + self.az_bias_rad
         else:
             az_bias_eff = self.az_bias_rad   # 0 for leader
 

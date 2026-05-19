@@ -104,16 +104,16 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 DRONE_CONFIGS = [
     #                                                          search_n  search_e  az_bias_deg
     (1, 4560, 14560, 0,  0.0,  0.0,  0.1, 1.344, 8888,  7.0,   1.5,  0.0),
-    (2, 4561, 14561, 1, -2.0, -2.5,  0.1, 1.258, 8889,  5.0,  -2.0,  0.0),  # flanked left
-    (3, 4562, 14562, 2,  2.0, -2.5,  0.1, 1.507, 8890,  5.0,   2.0,  0.0),  # flanked right
+    (2, 4561, 14561, 1, -2.0, -2.5,  0.1, 1.258, 8889,  6.0,  -3.0, 0.0),  # flanked left
+    (3, 4562, 14562, 2,  2.0, -2.5,  0.1, 1.507, 8890,  6.0,  +3.0, 0.0),  # flanked right
 ]
 
 # FRDB + IACG parameters shared by all PNG nodes.
 IACG_PARAMS = {
-    'r0':               15.0,   # initial assumed range [m]
-    'bias_decay_alpha':  1.0,   # 1 = linear decay; 0.5 = fast early; 2 = late snap
+    'r0':               10.0,   # initial assumed range [m]
+    'bias_decay_alpha':  2.0,   # 1 = linear decay; 0.5 = fast early; 2 = late snap
     'leader_id':         1,     # drone that broadcasts LOS direction
-    'bias_gain_K':       3.0,   # amplification factor for geometric angle (~38° effective bias)
+    'bias_gain_K':       3.5,   # amplification factor for geometric angle (~38° effective bias)
 }
 
 
@@ -224,19 +224,19 @@ def make_drone_nodes(context, drone_id, filter_type, detector_type, model_path,
             **base_params,
             'takeoff_height': 6.0,
             'forward_distance_limit': 50.0,
-            'collision_distance': 0.0,
+            'collision_distance': 1.5,
             'mission_timeout': 60.0,
             'max_speed': 10.0,
             # Per-drone NED search waypoint (midpoint; drone transitions to
             # INTERCEPT as soon as IBVS detects the target — no proximity gate).
             'search_target_n': search_n,
             'search_target_e': search_e,
-            'search_arrival_dist': 0.0,   # disabled: IACG handles angle, not waypoints
-            # Balloon NED position for yaw-toward-target during SEARCH.
-            #'balloon_ned_n': IACG_PARAMS['balloon_ned_n'],
-            #'balloon_ned_e': IACG_PARAMS['balloon_ned_e'],
+            'search_arrival_dist': 3.0,
             # Disable auto-start timer; /swarm/start trigger fires all drones together.
             'start_delay_s': 9999.0,
+            # Spawn position in Gazebo ENU — needed to convert /target_world_pos to local NED.
+            'spawn_gazebo_x': spawn_x,
+            'spawn_gazebo_y': spawn_y,
         }]
     )
 
@@ -249,9 +249,6 @@ def make_drone_nodes(context, drone_id, filter_type, detector_type, model_path,
         parameters=[{
             **base_params,
             'filter_type': effective_filter,
-            'target_gazebo_x': 3.0,
-            'target_gazebo_y': 13.0,
-            'target_gazebo_z': 6.5,
             'spawn_gazebo_x': spawn_x,
             'spawn_gazebo_y': spawn_y,
             'fx': 454.8, 'fy': 454.8, 'cx': 424.0, 'cy': 240.0,
@@ -327,7 +324,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'target_name': 'target_balloon',
-            'nominal_x': 0.0, 'nominal_y': 10.0, 'nominal_z': 5.0,
+            'nominal_x': 0.0, 'nominal_y': 15.0, 'nominal_z': 5.0,
             'amplitude': 0.0, 'speed': 0.0,
             'balloon_link_z_offset': 1.5,
         }]
@@ -442,17 +439,25 @@ def launch_setup(context, *args, **kwargs):
         TimerAction(period=8.0,  actions=[px4_procs[1]]),
         TimerAction(period=11.0, actions=[px4_procs[2]]),
     ]
-    # /swarm/start fires at t=35s: all three drone_managers (IDLE) receive it
-    # simultaneously and transition to TAKEOFF at the same instant.
-    swarm_start = ExecuteProcess(
-        cmd=['ros2', 'topic', 'pub', '--times', '5',
-             '/swarm/start', 'std_msgs/msg/String', '{data: go}'],
+    # swarm_coordinator: waits for all drone_managers to publish /swarm/ready
+    # (ARM + OFFBOARD reached in IDLE), then fires /swarm/start automatically.
+    # This replaces the fixed-timer approach and guarantees simultaneous departure.
+    swarm_coordinator = Node(
+        package='balloon_hunter',
+        executable='swarm_coordinator',
+        name='swarm_coordinator',
         output='screen',
+        parameters=[{
+            'expected_drone_ids': [cfg[0] for cfg in DRONE_CONFIGS],
+            'start_publish_count': 10,
+        }]
     )
 
-    #timed_target_mover = TimerAction(period=13.0, actions=[target_mover])
-    timed_mission      = TimerAction(period=30.0, actions=[*all_mission_nodes, swarm_visualizer])
-    timed_swarm_start  = TimerAction(period=35.0, actions=[swarm_start])
+    timed_target_mover = TimerAction(period=13.0, actions=[target_mover])
+    timed_mission = TimerAction(
+        period=30.0,
+        actions=[*all_mission_nodes, swarm_visualizer, swarm_coordinator],
+    )
 
     # ── ros2 bag (optional) ──
     bag_actions = []
@@ -472,9 +477,8 @@ def launch_setup(context, *args, **kwargs):
         *sdf_gens,
         *timed_spawns,
         *timed_px4,
-        #timed_target_mover,
+        timed_target_mover,
         timed_mission,
-        timed_swarm_start,
         *bag_actions,
     ]
 

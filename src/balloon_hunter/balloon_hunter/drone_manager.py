@@ -13,7 +13,8 @@ This node only handles:
 Subscriptions:
   drone{id}/fmu/out/vehicle_status      — arming/nav state
   drone{id}/fmu/out/monitoring          — position, attitude
-  /png/guidance_cmd                     — GuidanceCmd from PNG
+  png/guidance_cmd                      — GuidanceCmd from PNG
+  ibvs/output                           — IBVSOutput (q_z for SEARCH yaw)
   /target_world_pos                     — target position for collision check
   /mission_state                        — (publishes, not subscribes)
 
@@ -41,7 +42,7 @@ from px4_msgs.msg import (
 )
 from geometry_msgs.msg import Point
 from std_msgs.msg import String
-from suicide_drone_msgs.msg import GuidanceCmd
+from suicide_drone_msgs.msg import GuidanceCmd, IBVSOutput
 from enum import Enum
 
 
@@ -72,14 +73,13 @@ class DroneManager(Node):
         # search waypoint, even if the target is already detected.
         # Prevents flanking drones (2, 3) from intercepting before reaching their
         # pre-planned azimuth position.  Set to 0.0 to disable (drone1 default).
-        self.declare_parameter('search_arrival_dist', 3.0)
-        # Balloon NED position — used to yaw toward the target during SEARCH so
-        # the camera faces the balloon when the drone arrives at the flanking waypoint.
-        self.declare_parameter('balloon_ned_n', 13.0)
-        self.declare_parameter('balloon_ned_e',  3.0)
+        self.declare_parameter('search_arrival_dist', 1.0)
         # Auto-start delay [s]. Set to a large value in swarm launches to disable
         # the self-start timer and rely on /swarm/start instead.
         self.declare_parameter('start_delay_s', 5.0)
+        # Drone spawn position in Gazebo ENU (for target_world_pos → local NED conversion)
+        self.declare_parameter('spawn_gazebo_x', 0.0)
+        self.declare_parameter('spawn_gazebo_y', 0.0)
 
         self.system_id              = self.get_parameter('system_id').value
         self.takeoff_height         = self.get_parameter('takeoff_height').value
@@ -90,9 +90,9 @@ class DroneManager(Node):
         self.search_target_n        = self.get_parameter('search_target_n').value
         self.search_target_e        = self.get_parameter('search_target_e').value
         self.search_arrival_dist    = self.get_parameter('search_arrival_dist').value
-        self.balloon_ned_n          = self.get_parameter('balloon_ned_n').value
-        self.balloon_ned_e          = self.get_parameter('balloon_ned_e').value
         self.start_delay_s          = self.get_parameter('start_delay_s').value
+        self.spawn_gazebo_x         = self.get_parameter('spawn_gazebo_x').value
+        self.spawn_gazebo_y         = self.get_parameter('spawn_gazebo_y').value
 
         self.topic_prefix = f"/drone{self.system_id}/fmu/"
 
@@ -107,10 +107,12 @@ class DroneManager(Node):
         self.last_cmd_time    = 0.0
         self.forward_start_pos = None
         self._mission_start_t = None
+        self._killed          = False   # True when collision kill has been sent
 
         # INTERCEPT inputs (from PNG guidance_cmd)
         self.guidance_cmd     = None
         self.target_world_pos = None
+        self.ibvs_output      = None
 
         # ── Publishers ──
         self.ocm_pub = self.create_publisher(
@@ -129,6 +131,8 @@ class DroneManager(Node):
             qos_profile_sensor_data,
         )
         self.state_pub = self.create_publisher(String, 'mission_state', 10)
+        self.ready_pub = self.create_publisher(String, '/swarm/ready', 10)
+        self._ready_published = False
 
         # ── Subscribers ──
         self.create_subscription(
@@ -147,6 +151,12 @@ class DroneManager(Node):
             GuidanceCmd,
             'png/guidance_cmd',
             self.guidance_cmd_cb,
+            10,
+        )
+        self.create_subscription(
+            IBVSOutput,
+            'ibvs/output',
+            self.ibvs_output_cb,
             10,
         )
         self.create_subscription(
@@ -182,7 +192,7 @@ class DroneManager(Node):
             search_wp = np.array([self.search_target_n, self.search_target_e,
                                   -self.takeoff_height])
             dist_to_wp = np.linalg.norm(self.drone_pos - search_wp)
-            if self.search_arrival_dist <= 0.0 or dist_to_wp < self.search_arrival_dist:
+            if self.search_arrival_dist <= 0.0 or dist_to_wp < self.search_arrival_dist: #edit
                 self.get_logger().info(
                     f'Target detected at wp_dist={dist_to_wp:.1f}m -> INTERCEPT'
                 )
@@ -200,6 +210,9 @@ class DroneManager(Node):
             self.get_logger().warn('Target lost! INTERCEPT -> SEARCH')
             self.state = State.SEARCH
 
+    def ibvs_output_cb(self, msg: IBVSOutput):
+        self.ibvs_output = msg
+
     def target_pos_cb(self, msg: Point):
         self.target_world_pos = np.array([msg.x, msg.y, msg.z])
 
@@ -215,6 +228,9 @@ class DroneManager(Node):
 
     # ── Offboard heartbeat (10Hz) ──
     def ocm_cb(self):
+        # Stop heartbeat after collision kill — PX4 will failsafe to land/disarm.
+        if self._killed:
+            return
         msg = OffboardControlMode()
         if self.state == State.INTERCEPT:
             msg.position = False
@@ -262,6 +278,14 @@ class DroneManager(Node):
                 self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
                 self.get_logger().info('Pre-arm: OFFBOARD requested')
                 self.last_cmd_time = now
+        else:
+            # Armed + Offboard in IDLE → signal coordinator that this drone is ready.
+            if not self._ready_published:
+                msg = String()
+                msg.data = str(self.system_id)
+                self.ready_pub.publish(msg)
+                self.get_logger().info('Pre-arm complete: published /swarm/ready')
+                self._ready_published = True
 
     def _takeoff(self):
         alt = -self.takeoff_height
@@ -294,7 +318,12 @@ class DroneManager(Node):
             self.state = State.SEARCH
 
     def _search(self):
-        """Fly to search_target_n/e (flanking waypoint), yawing toward balloon throughout."""
+        """Fly to search_target_n/e (flanking waypoint), yawing toward target throughout.
+
+        Yaw priority:
+          1. IBVS q_z (camera-derived LOS azimuth) when target is detected — no prior knowledge.
+          2. Fallback: face toward search waypoint when target not yet visible.
+        """
         if self.forward_start_pos is None:
             self.forward_start_pos = self.drone_pos.copy()
 
@@ -310,14 +339,16 @@ class DroneManager(Node):
             )
             return
 
-        # Yaw toward balloon so the camera is already facing it at the flanking waypoint.
-        yaw_to_balloon = math.atan2(
-            self.balloon_ned_e - self.drone_pos[1],
-            self.balloon_ned_n - self.drone_pos[0],
-        )
+        if self.ibvs_output is not None and self.ibvs_output.detected:
+            yaw = self.ibvs_output.q_z
+        else:
+            yaw = math.atan2(
+                self.search_target_e - self.drone_pos[1],
+                self.search_target_n - self.drone_pos[0],
+            )
         self._pub_pos(
             [self.search_target_n, self.search_target_e, -self.takeoff_height],
-            yaw=yaw_to_balloon,
+            yaw=yaw,
         )
 
     def _intercept(self):
@@ -331,15 +362,17 @@ class DroneManager(Node):
 
         # ── Collision detection ──
         if self.target_world_pos is not None:
+            # Convert absolute Gazebo ENU → drone-local NED by subtracting spawn offset.
+            # drone_pos (from PX4 Monitoring) is relative to the drone's own spawn point.
             target_pos_ned = np.array([
-                self.target_world_pos[1],   # North = Gazebo Y
-                self.target_world_pos[0],   # East  = Gazebo X
-                -self.target_world_pos[2]   # Down  = -Gazebo Z
+                self.target_world_pos[1] - self.spawn_gazebo_y,  # North = Gazebo Y - spawn_Y
+                self.target_world_pos[0] - self.spawn_gazebo_x,  # East  = Gazebo X - spawn_X
+                -self.target_world_pos[2]                         # Down  = -Gazebo Z
             ])
             dist = np.linalg.norm(self.drone_pos - target_pos_ned)
             if dist < self.collision_dist:
-                self.get_logger().info(f'COLLISION at dist={dist:.2f}m -> DONE')
-                self._finish()
+                self.get_logger().info(f'COLLISION at dist={dist:.2f}m -> kill drone')
+                self._collision_kill()
                 return
 
         # ── Apply guidance command ──
@@ -358,8 +391,18 @@ class DroneManager(Node):
         )
 
     def _done(self):
-        self._pub_pos(self.drone_pos.tolist(), yaw=self.drone_yaw)
-        self.get_logger().info('Mission DONE, hovering.', throttle_duration_sec=5.0)
+        if self._killed:
+            self.get_logger().info('Collision landing.', throttle_duration_sec=2.0)
+        else:
+            self._pub_pos(self.drone_pos.tolist(), yaw=self.drone_yaw)
+            self.get_logger().info('Mission DONE, hovering.', throttle_duration_sec=5.0)
+
+    def _collision_kill(self):
+        """Stop OCM heartbeat and command landing on collision."""
+        self._killed = True
+        self.state   = State.DONE
+        self._pub_cmd(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+        self.get_logger().info('Collision: NAV_LAND sent, OCM stopped -> DONE')
 
     def _finish(self):
         self.state = State.DONE
