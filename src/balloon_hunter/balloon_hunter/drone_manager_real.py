@@ -29,6 +29,8 @@ Publications:
   /mission_state                            — String (state name)
 """
 
+import sys
+import select
 import time
 import numpy as np
 import rclpy
@@ -41,7 +43,7 @@ from px4_msgs.msg import (
     VehicleStatus,
     Monitoring,
 )
-from std_msgs.msg import String, Uint32
+from std_msgs.msg import String, UInt32
 from suicide_drone_msgs.msg import GuidanceCmd
 from enum import Enum
 
@@ -88,9 +90,6 @@ class DroneManagerReal(Node):
         self.guidance_cmd     = None
         self._last_hold_pos   = np.zeros(3)  # position when target was last lost
 
-        # Mode change trigger
-        self.trigger_msg = False
-
         # ── Publishers ──
         self.ocm_pub = self.create_publisher(
             OffboardControlMode,
@@ -108,7 +107,7 @@ class DroneManagerReal(Node):
             qos_profile_sensor_data,
         )
         self.state_pub = self.create_publisher(String, '/mission_state', 10)
-        self.trigger_pub = self.create_publisher(Uint32, '/tracking_trigger', qos_profile_sensor_data)
+        self.trigger_pub = self.create_publisher(UInt32, '/tracking_trigger', 10)
 
         # ── Subscribers ──
         self.create_subscription(
@@ -128,13 +127,6 @@ class DroneManagerReal(Node):
             '/png/guidance_cmd',
             self.guidance_cmd_cb,
             10,
-        )
-
-        self.trigger_subscriber_ = self.create_subscription(
-            Uint32,
-            f'/tracking_trigger',
-            self.trigger_callback,
-            qos_profile_sensor_data
         )
 
         # ── Timers ──
@@ -164,17 +156,9 @@ class DroneManagerReal(Node):
     def guidance_cmd_cb(self, msg: GuidanceCmd):
         self.guidance_cmd = msg
 
-    def trigger_callback(self, msg: Uint32):
-        if msg.data == self.system_id:
-            self.trigger_msg = True
-        else:
-            self.trigger_msg = False
 
     # ── Offboard heartbeat (10Hz) ──
     def ocm_cb(self):
-        if not self.trigger_msg:
-            return
-
         msg = OffboardControlMode()
         if self.state == State.TRACKING and self.guidance_cmd is not None \
                 and self.guidance_cmd.target_detected:
@@ -207,9 +191,6 @@ class DroneManagerReal(Node):
         if not self.pos_received:
             return
 
-        if not self.trigger_msg:
-            return
-
         # Always publish position hold at captured position
         self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
 
@@ -227,9 +208,27 @@ class DroneManagerReal(Node):
                 self.last_cmd_time = now
             return
 
+        if self.guidance_cmd.target_detected:
+            self.get_logger().info("타겟이 검출되었습니다. 터미널에 'y'를 입력하고 Enter를 누르세요.", once=True)
+
+            i, o, e = select.select([sys.stdin], [], [], 0.0)
+
+            if i:
+                user_input = sys.stdin.readline().strip()
+
+                if user_input.lower() == 'y':
+                    self.get_logger().info("진행")
+                else:
+                    self.get_logger().warning("취소")
+                    return
+            else:
+                return
+
+
         # OFFBOARD mode active -> transition to HOVER_INIT
         self.get_logger().info('OFFBOARD active -> HOVER_INIT')
         self._hover_start_t = time.time()
+        self.trigger_pub.publish(UInt32(data=self.system_id))
         self.state = State.HOVER_INIT
 
     def _hover_init(self):
@@ -237,7 +236,7 @@ class DroneManagerReal(Node):
         self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
 
         elapsed = time.time() - self._hover_start_t
-        if elapsed >= self.hover_init_dur:
+        if elapsed >= self.hover_init_dur*self.system_id:
             self.get_logger().info(
                 f'Filter init complete ({self.hover_init_dur}s) -> TRACKING'
             )
@@ -251,7 +250,6 @@ class DroneManagerReal(Node):
 
     def _tracking(self):
         """Follow PNG guidance when target detected, hold position otherwise."""
-        self.trigger_pub.publish(Uint32(data=(self.system_id+1)))
 
         if self.guidance_cmd is not None and self.guidance_cmd.target_detected:
             # Velocity control from PNG

@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
-from std_msgs.msg import Uint32
+from std_msgs.msg import UInt32
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, Monitoring
 from jfi_comm.msg import PosYaw
 
@@ -59,10 +59,10 @@ class DroneManager(Node):
         )
 
         self.trigger_subscriber_ = self.create_subscription(
-            Uint32,
+            UInt32,
             f'/tracking_trigger',
             self.trigger_callback,
-            qos_profile_sensor_data
+            10
         )
 
         self.timer_mission_ = self.create_timer(0.05, self.timer_mission_callback) # 20Hz

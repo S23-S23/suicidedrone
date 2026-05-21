@@ -75,26 +75,12 @@ target_link_libraries(pos_yaw_receiver_node
   ${typesupport_target}
 )
 
-add_executable(pso_yaw_send_node
-  src/pso_yaw_send_node.cpp
-)
-ament_target_dependencies(pso_yaw_send_node
-  rclcpp
-  std_msgs
-)
-target_link_libraries(pso_yaw_send_node
-  ${typesupport_target}
-)
-
 # Install
 install(TARGETS
   jfi_comm_lib
   serial_comm_node_lib
   serial_comm_node
-  #--------------------------------#
-  #Fixed by TYK
   pos_yaw_receiver_node
-  #--------------------------------#
   DESTINATION lib/${PROJECT_NAME}
 )
 

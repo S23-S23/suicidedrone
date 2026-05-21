@@ -9,7 +9,7 @@ SerialCommNode::SerialCommNode()
   declare_parameter<int>("baud_rate", 115200);
   declare_parameter<int>("system_id", 1);
   declare_parameter<int>("component_id", 1);
-  
+
   port_name_    = get_parameter("port_name").as_string();
   baud_rate_    = get_parameter("baud_rate").as_int();
   system_id_    = static_cast<uint8_t>(get_parameter("system_id").as_int());

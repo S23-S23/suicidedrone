@@ -10,17 +10,16 @@ class PosYawReceiverNode : public rclcpp::Node
 public:
   PosYawReceiverNode() : Node("pos_yaw_receiver_node")
   {
-    // 파라미터 설정 (선택사항)
     declare_parameter<int>("drone_id", 2);
     drone_id_ = static_cast<uint8_t>(get_parameter("drone_id").as_int());
 
-    // 1. jfi_comm/out/packet 구독 (시리얼에서 받은 데이터)
+    // Subscriber
     packet_sub_ = this->create_subscription<jfi_comm::msg::SwarmComm>(
       "jfi_comm/out/packet", 10,
       std::bind(&PosYawReceiverNode::packet_callback, this, std::placeholders::_1)
     );
 
-    // 2. 역직렬화된 PosYaw 재발행 (선택사항 - 다른 노드에서 사용하려면)
+    // Publisher
     pos_yaw_pub_ = this->create_publisher<jfi_comm::msg::PosYaw>(
       "/drone1/jfi/out/pos_yaw", rclcpp::SensorDataQoS()
     );
@@ -35,7 +34,7 @@ public:
 private:
   void packet_callback(const jfi_comm::msg::SwarmComm::SharedPtr packet)
   {
-    // TID 10 = RTK 데이터 확인
+    // TID 10
     if (packet->tid == 10) {
 
       RCLCPP_DEBUG(this->get_logger(),
@@ -77,28 +76,6 @@ private:
           "Failed to deserialize PosYaw from system %u: %s",
           packet->src_sysid, e.what());
       }
-    }
-    else if(packet->tid == 11) {
-      rclcpp::Serialization<jfi_comm::msg::PosYaw> serializer;
-      rclcpp::SerializedMessage serialized_msg;
-
-      serialized_msg.reserve(packet->payload.size());
-      serialized_msg.get_rcl_serialized_message().buffer_length = packet->payload.size();
-      std::memcpy(
-        serialized_msg.get_rcl_serialized_message().buffer,
-        packet->payload.data(),
-        packet->payload.size()
-      );
-
-      std_msgs::msg::UInt32 trigger;
-
-      serializer.deserialize_message(&serialized_msg, &trigger);
-
-      RCLCPP_INFO(this->get_logger(),
-        "Received trigger from Drone %u: trigger value = %u",
-        packet->src_sysid, trigger.data);
-
-        trigger_pub->publish(trigger);
     }
   }
 
