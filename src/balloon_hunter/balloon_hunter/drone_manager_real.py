@@ -190,6 +190,8 @@ class DroneManagerReal(Node):
         """Wait for position data, send position hold, request OFFBOARD."""
         if not self.pos_received:
             return
+        if self.guidance_cmd is None:
+            return
 
         # Always publish position hold at captured position
         self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
@@ -209,21 +211,11 @@ class DroneManagerReal(Node):
             return
 
         if self.guidance_cmd.target_detected:
-            self.get_logger().info("타겟이 검출되었습니다. 터미널에 'y'를 입력하고 Enter를 누르세요.", once=True)
-
-            i, o, e = select.select([sys.stdin], [], [], 0.0)
-
-            if i:
-                user_input = sys.stdin.readline().strip()
-
-                if user_input.lower() == 'y':
-                    self.get_logger().info("진행")
-                else:
-                    self.get_logger().warning("취소")
-                    return
-            else:
+            self.get_logger().info("타겟 검출.", once=True)
+            if not self.trigger_msg:
                 return
-
+        else:
+            return
 
         # OFFBOARD mode active -> transition to HOVER_INIT
         self.get_logger().info('OFFBOARD active -> HOVER_INIT')

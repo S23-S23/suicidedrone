@@ -64,7 +64,23 @@ class PNGGuidance(Node):
         self.rate        = self.get_parameter('rate').value
         self.v_min_sigma = self.get_parameter('v_min_sigma').value
 
-        # ── Runtime state ───────────────────────────────────────────────────
+        # ── Runtime state ──────────────────────
+        self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
+
+        now = self.get_clock().now().nanoseconds / 1e9
+
+        # Need at least ~20 OCM messages before requesting OFFBOARD
+        if self.ocm_count < 20:
+            return
+
+        # Request OFFBOARD mode
+        if self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            if now - self.last_cmd_time > 1.0:
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+                self.get_logger().info('OFFBOARD mode requested (switch RC to OFFBOARD if needed)')
+                self.last_cmd_time = now
+            return
+─────────────────────────────
         self.R_e_b       = np.eye(3)
         self.v_ned       = np.zeros(3)
         self.q_y_prev    = 0.0
