@@ -78,6 +78,7 @@ class DroneManagerReal(Node):
         self.last_cmd_time    = 0.0
         self.ocm_count        = 0            # offboard heartbeat count
         self.pos_received     = False        # have we received at least one position?
+        self.trigger_msg      = False
 
         # Position to hold during INIT/HOVER_INIT
         self.hold_pos         = np.zeros(3)
@@ -128,6 +129,12 @@ class DroneManagerReal(Node):
             self.guidance_cmd_cb,
             10,
         )
+        self.trigger_subscriber_ = self.create_subscription(
+            UInt32,
+            f'/tracking_trigger',
+            self.trigger_callback,
+            10
+        )
 
         # ── Timers ──
         self.create_timer(0.1,  self.ocm_cb)      # 10 Hz offboard heartbeat
@@ -156,6 +163,12 @@ class DroneManagerReal(Node):
     def guidance_cmd_cb(self, msg: GuidanceCmd):
         self.guidance_cmd = msg
 
+    def trigger_callback(self, msg):
+        if msg.data == self.system_id:
+            self.get_logger().info(f"drone{self.system_id} received tracking trigger.")
+            self.trigger_msg = True
+        else:
+            self.trigger_msg = False
 
     # ── Offboard heartbeat (10Hz) ──
     def ocm_cb(self):
@@ -190,7 +203,7 @@ class DroneManagerReal(Node):
         """Wait for position data, send position hold, request OFFBOARD."""
         if not self.pos_received:
             return
-        if self.guidance_cmd is None:
+        if self.guidance_cmd is None and not self.trigger_msg:
             return
 
         # Always publish position hold at captured position
@@ -212,7 +225,10 @@ class DroneManagerReal(Node):
 
         if self.guidance_cmd.target_detected:
             self.get_logger().info("타겟 검출.", once=True)
-            if not self.trigger_msg:
+            if self.trigger_msg:
+                self.get_logger().info("트리거 수신.", once=True)
+            else:
+                self.get_logger().info("트리거 미수신.", once=True)
                 return
         else:
             return
