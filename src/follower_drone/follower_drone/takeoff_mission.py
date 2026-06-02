@@ -97,13 +97,18 @@ class TakeoffMission():
     def POSY(self):
         return self.node.monitoring_msg.pos_y
 
+    def POSZ(self):
+        return self.node.monitoring_msg.pos_z
+
     def POS(self):
         return [self.node.monitoring_msg.pos_x,
                 self.node.monitoring_msg.pos_y,
                 self.node.monitoring_msg.pos_z]
+
     def distance(self, pos1, pos2):
-        posDiff = [pos1[0]-pos2[0], pos1[1]-pos2[1], pos1[2]-pos2[2]]
-        distance = math.sqrt(posDiff[0]**2 + posDiff[1]**2 +  posDiff[2]**2)
+        # posDiff = [pos1[0]-pos2[0], pos1[1]-pos2[1], pos1[2]-pos2[2]]
+        # distance = math.sqrt(posDiff[0]**2 + posDiff[1]**2 +  posDiff[2]**2)
+        distance = math.sqrt((pos1[2]-pos2[2])**2)
         return distance
 
     def isArmed(self):
@@ -116,7 +121,7 @@ class TakeoffMission():
         distance = self.distance(self.POS(), targetPOS)
         return (distance < 0.2), distance
 
-    def setpoint(self, setpoint, yaw=0.0):
+    def setpoint(self, setpoint, yaw=math.nan):
         msg = TrajectorySetpoint()
         msg.position[0] = setpoint[0]
         msg.position[1] = setpoint[1]
