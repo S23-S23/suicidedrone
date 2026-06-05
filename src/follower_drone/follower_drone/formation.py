@@ -21,8 +21,10 @@ class Formation:
         distance = self.distance * layer
         target_radian = yaw_leader + np.pi + theta
 
-        target_x = (x_leader + distance * np.cos(target_radian)) - self.node.ref_ned[0]
-        target_y = (y_leader + distance * np.sin(target_radian)) - self.node.ref_ned[1]
+        # target_x = (x_leader + distance * np.cos(target_radian)) - self.node.ref_ned[0]
+        target_x = self.node.monitoring_msg.pos_x + ((x_leader + distance * np.cos(target_radian)) - self.node.monitoring_msg.rtk_n)
+        # target_y = (y_leader + distance * np.sin(target_radian)) - self.node.ref_ned[1]
+        target_y = self.node.monitoring_msg.pos_y + ((y_leader + distance * np.sin(target_radian)) - self.node.monitoring_msg.rtk_e)
         # target_z = self.node.monitoring_msg.pos_z + (self.node.leader_pose_msg.pos_z - self.node.monitoring_msg.rtk_d)
 
         return [target_x, target_y, min(self.node.leader_pose_msg.pos_z, -0.1)]
