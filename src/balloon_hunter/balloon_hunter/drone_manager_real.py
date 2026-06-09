@@ -203,7 +203,7 @@ class DroneManagerReal(Node):
         """Wait for position data, send position hold, request OFFBOARD."""
         if not self.pos_received:
             return
-        if self.guidance_cmd is None and not self.trigger_msg:
+        if self.guidance_cmd is None:
             return
 
         # Always publish position hold at captured position
