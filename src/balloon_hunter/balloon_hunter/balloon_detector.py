@@ -43,7 +43,7 @@ class BalloonDetector(Node):
         # ── Parameters ──
         self.declare_parameter('system_id', 1)
         self.declare_parameter('camera_topic', '/camera/camera/color/image_raw')
-        self.declare_parameter('model_path', '../yolo_pt/balloon_yolov8n.pt')
+        self.declare_parameter('model_path', '/home/suvlab/ros2_ws/suicidedrone/src/balloon_hunter/models/balloon_yolov8n.pt')
         self.declare_parameter('conf', 0.5)
         self.declare_parameter('target_class', 'red-balloon')
         self.declare_parameter('warmup_h', 720)
