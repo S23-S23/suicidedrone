@@ -187,7 +187,7 @@ def launch_setup(context, *args, **kwargs):
             '/mission_state',
             # PX4 출력
             f'drone{system_id}/fmu/out/monitoring',
-            f'drone{system_id}/fmu/out/vehicle_local_position',
+            f'drone{system_id}/fmu/out/vehicle_local_position_v1',
             f'drone{system_id}/fmu/out/vehicle_angular_velocity',
             f'drone{system_id}/fmu/out/vehicle_attitude',
             f'drone{system_id}/fmu/out/vehicle_status',
