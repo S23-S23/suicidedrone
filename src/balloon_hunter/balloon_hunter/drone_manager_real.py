@@ -358,9 +358,6 @@ class DroneManagerReal(Node):
         """
         if not self.pos_received:
             return
-        # Before trigger: follower_drone is in full control. Stay silent.
-        if not self.trigger_msg:
-            return
 
         # Triggered: balloon_hunter has taken over. Hold the handoff position.
         self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
@@ -381,7 +378,12 @@ class DroneManagerReal(Node):
 
         # Wait until the balloon is actually in view before committing to attack.
         if not self._target_recent():
-            self.get_logger().info('트리거 수신, 타겟 대기 중...', throttle_duration_sec=1.0)
+            self.get_logger().info('타겟 대기 중...', throttle_duration_sec=3.0)
+            return
+
+        # Before trigger: follower_drone is in full control. Stay silent.
+        if not self.trigger_msg:
+            self.get_logger().info('트리거 대기 중...', throttle_duration_sec=1.0)
             return
 
         # OFFBOARD active + target detected -> transition to HOVER_INIT.
