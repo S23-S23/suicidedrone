@@ -360,7 +360,7 @@ class DroneManagerReal(Node):
             return
 
         # Triggered: balloon_hunter has taken over. Hold the handoff position.
-        self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
+        #self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
 
         now = self.get_clock().now().nanoseconds / 1e9
 
