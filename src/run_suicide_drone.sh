@@ -24,12 +24,26 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── 경로 자동 탐지 ────────────────────────────────────────────────────────
+# 이 스크립트는 <workspace>/src/run_suicide_drone.sh 에 위치한다고 가정.
+# 따라서 워크스페이스 루트 = 스크립트 폴더의 상위. (어느 머신/경로에서든 동작)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# 카메라 워크스페이스는 환경변수 CAMERA_WS로 덮어쓸 수 있음 (기본: ~/ros2_ws/camera)
+CAMERA_WS="${CAMERA_WS:-$HOME/ros2_ws/camera}"
+
+if [ ! -f "${WS_ROOT}/install/setup.bash" ]; then
+    echo "[run_balloon_hunt] ERROR: ${WS_ROOT}/install/setup.bash 없음. 먼저 빌드하세요:"
+    echo "    cd ${WS_ROOT} && colcon build && source install/setup.bash"
+    exit 1
+fi
+
 # ── 0. ROS2 Humble 기본 환경 소싱 ─────────────────────────────────────────
 source /opt/ros/humble/setup.bash
 
 # ── 1. RealSense 카메라 런치 (백그라운드) ──────────────────────────────────
-echo "[run_balloon_hunt] 1) RealSense 카메라 실행 중..."
-source ~/ros2_ws/camera/install/setup.bash
+echo "[run_balloon_hunt] 1) RealSense 카메라 실행 중... (camera_ws=${CAMERA_WS})"
+source "${CAMERA_WS}/install/setup.bash"
 ros2 launch realsense2_camera rs_launch.py \
     pointcloud.enable:=false \
     depth_module.profile:=848x480x30 \
@@ -48,8 +62,8 @@ for i in {1..20}; do
 done
 
 # ── 2. Balloon Hunter 파이프라인 런치 (포그라운드) ─────────────────────────
-echo "[run_balloon_hunt] 2) Balloon Hunter 파이프라인 실행"
-source ~/ros2_ws/suicidedrone/install/setup.bash
+echo "[run_balloon_hunt] 2) Balloon Hunter 파이프라인 실행 (ws=${WS_ROOT})"
+source "${WS_ROOT}/install/setup.bash"
 ros2 launch balloon_hunter balloon_hunt_real.launch.py "$@"
 
 # 위 ros2 launch가 Ctrl-C로 종료되면 trap이 걸려서 자동 정리됨

@@ -41,9 +41,10 @@ from px4_msgs.msg import (
     TrajectorySetpoint,
     VehicleCommand,
     VehicleStatus,
+    VehicleLandDetected,
     Monitoring,
 )
-from std_msgs.msg import String, UInt32
+from std_msgs.msg import String, UInt32, Float32MultiArray
 from suicide_drone_msgs.msg import GuidanceCmd, TargetInfo
 from enum import Enum
 
@@ -52,6 +53,8 @@ class State(Enum):
     INIT = 0
     HOVER_INIT = 1
     TRACKING = 2
+    LANDING = 3      # 직충돌 감지 -> AUTO.LAND
+    DISARMED = 4     # 착지 완료 -> DISARM 송신 후 종료
 
 
 class DroneManagerReal(Node):
@@ -63,9 +66,28 @@ class DroneManagerReal(Node):
         self.declare_parameter('hover_init_duration', 5.0)  # seconds to hover for filter init
         self.declare_parameter('max_speed', 10.0)
 
+        # ── 직충돌 감지 (bbox 면적비율 + 검출 소실) ──
+        # 충돌 판정: "세션 peak 면적비율 >= collision_area_frac"인 상태에서
+        #            "collision_lost_time 초 이상 미검출"이면 직충돌/도달로 보고 LAND+DISARM.
+        self.declare_parameter('collision_area_frac', 0.50)  # 화면 대비 bbox 면적비율 임계 (0~1)
+        self.declare_parameter('collision_lost_time', 1.0)   # 임계 초과 후 미검출 지속시간 [s]
+        self.declare_parameter('collision_min_edges', 0)     # peak 프레임 경계접촉 변 수 하한(0=미사용)
+        self.declare_parameter('image_width', 1280)          # /target_info 기준 영상 폭
+        self.declare_parameter('image_height', 720)          # /target_info 기준 영상 높이
+        self.declare_parameter('enable_collision_land', True)  # 충돌 시 자동 착륙 on/off
+        self.declare_parameter('land_disarm_timeout', 5.0)   # AUTO.LAND 후 landed 미수신 시 강제 DISARM까지 시간[s] (<=0=비활성)
+
         self.system_id          = self.get_parameter('system_id').value
         self.hover_init_dur     = self.get_parameter('hover_init_duration').value
         self.max_speed          = self.get_parameter('max_speed').value
+        self.collision_area_frac = self.get_parameter('collision_area_frac').value
+        self.collision_lost_time = self.get_parameter('collision_lost_time').value
+        self.collision_min_edges = self.get_parameter('collision_min_edges').value
+        self.img_w              = int(self.get_parameter('image_width').value)
+        self.img_h              = int(self.get_parameter('image_height').value)
+        self.enable_collision_land = self.get_parameter('enable_collision_land').value
+        self.land_disarm_timeout = float(self.get_parameter('land_disarm_timeout').value)
+        self.img_area           = float(self.img_w * self.img_h)
 
         self.topic_prefix = f"drone{self.system_id}/fmu/"
 
@@ -93,6 +115,15 @@ class DroneManagerReal(Node):
         self.guidance_cmd     = None
         self._last_hold_pos   = np.zeros(3)  # position when target was last lost
 
+        # ── 직충돌 감지 상태 ──
+        self._bbox_last_frac  = 0.0          # 가장 최근 프레임 면적비율
+        self._bbox_peak_frac  = 0.0          # 현재 추적 세션의 최대 면적비율
+        self._bbox_peak_edges = 0            # peak 프레임에서의 경계접촉 변 수
+        self._collision_latched = False      # 충돌 판정 래치 (한 번 걸리면 유지)
+        self._land_cmd_time   = 0.0          # AUTO.LAND 명령 재송신 throttle
+        self._land_start_time = None         # LANDING 진입(첫 AUTO.LAND 송신) 시각 -> 강제 DISARM 타임아웃 기준
+        self.landed           = False        # VehicleLandDetected.landed
+
         # ── Publishers ──
         self.ocm_pub = self.create_publisher(
             OffboardControlMode,
@@ -111,6 +142,8 @@ class DroneManagerReal(Node):
         )
         self.state_pub = self.create_publisher(String, '/mission_state', 10)
         self.trigger_pub = self.create_publisher(UInt32, '/tracking_trigger', 10)
+        # 충돌 감지 디버그/로깅용: [last_frac, peak_frac, peak_edges, lost_time, latched]
+        self.collision_pub = self.create_publisher(Float32MultiArray, '/collision_info', 10)
 
         # ── Subscribers ──
         self.create_subscription(
@@ -138,11 +171,19 @@ class DroneManagerReal(Node):
             10
         )
         # Raw YOLO detection — used to gate INIT->HOVER_INIT (avoids guidance_cmd deadlock)
+        # 직충돌 감지용으로도 사용: 탐지 bbox 크기 추적
         self.create_subscription(
             TargetInfo,
             '/target_info',
             self.target_info_cb,
             10,
+        )
+        # 착지 완료 확인용 (DISARM 트리거)
+        self.create_subscription(
+            VehicleLandDetected,
+            f'{self.topic_prefix}out/vehicle_land_detected',
+            self.land_detected_cb,
+            qos_profile_sensor_data,
         )
 
         # ── Timers ──
@@ -185,8 +226,61 @@ class DroneManagerReal(Node):
         else:
             self.trigger_msg = False
 
+    def land_detected_cb(self, msg: VehicleLandDetected):
+        self.landed = msg.landed
+
     def target_info_cb(self, msg: TargetInfo):
-        self._last_target_time = self.get_clock().now()
+        """탐지 시각(_last_target_time) 갱신 + 충돌 판정용 세션 peak 면적비율 추적."""
+        now = self.get_clock().now()
+        L, T, R, B = msg.left, msg.top, msg.right, msg.bottom
+        w = max(0, R - L)
+        h = max(0, B - T)
+        frac = (w * h) / self.img_area
+        edges = self._edges_touched(L, T, R, B)
+
+        # 장시간 끊겼다가 다시 잡히면 새 세션 -> peak 리셋
+        if self._last_target_time is not None:
+            gap = (now - self._last_target_time).nanoseconds / 1e9
+            if gap > self.collision_lost_time:
+                self._bbox_peak_frac = 0.0
+                self._bbox_peak_edges = 0
+
+        self._bbox_last_frac = frac
+        if frac > self._bbox_peak_frac:
+            self._bbox_peak_frac = frac
+            self._bbox_peak_edges = edges
+        self._last_target_time = now
+
+    def _edges_touched(self, L, T, R, B):
+        """bbox가 화면 경계에 접한 변 개수 (가까울수록 클리핑되어 증가)."""
+        n = 0
+        if L <= 0:              n += 1
+        if T <= 0:              n += 1
+        if R >= self.img_w - 1: n += 1
+        if B >= self.img_h - 1: n += 1
+        return n
+
+    def _check_collision(self):
+        """직충돌/도달 판정: peak 면적비율 충족 + 일정시간 미검출."""
+        if self._collision_latched:
+            return True
+        if not self.enable_collision_land:
+            return False
+        if self._last_target_time is None:
+            return False
+        if self._bbox_peak_frac < self.collision_area_frac:
+            return False
+        if self._bbox_peak_edges < self.collision_min_edges:
+            return False
+        lost = (self.get_clock().now() - self._last_target_time).nanoseconds / 1e9
+        if lost >= self.collision_lost_time:
+            self._collision_latched = True
+            self.get_logger().warn(
+                f'COLLISION 감지: peak_frac={self._bbox_peak_frac*100:.1f}% '
+                f'(edges={self._bbox_peak_edges}), 소실={lost:.1f}s -> LANDING'
+            )
+            return True
+        return False
 
     def _target_recent(self):
         """True if a YOLO detection arrived within target_seen_timeout."""
@@ -197,6 +291,9 @@ class DroneManagerReal(Node):
 
     # ── Offboard heartbeat (10Hz) ──
     def ocm_cb(self):
+        # 착륙/종료 단계에서는 OFFBOARD heartbeat 중단 -> AUTO.LAND가 인계받게 함
+        if self.state in (State.LANDING, State.DISARMED):
+            return
         # Stay silent until triggered: before handoff, follower_drone owns the
         # OCM stream. Publishing here too would mix two OCM sources on PX4.
         if not self.trigger_msg:
@@ -220,12 +317,35 @@ class DroneManagerReal(Node):
         state_msg.data = self.state.name
         self.state_pub.publish(state_msg)
 
+        # 충돌 감지 디버그 정보 발행 (rosbag 로깅용)
+        if self._last_target_time is not None:
+            lost = (self.get_clock().now() - self._last_target_time).nanoseconds / 1e9
+        else:
+            lost = -1.0  # 아직 한 번도 탐지 안 됨
+        ci = Float32MultiArray()
+        ci.data = [
+            float(self._bbox_last_frac),
+            float(self._bbox_peak_frac),
+            float(self._bbox_peak_edges),
+            float(lost),
+            1.0 if self._collision_latched else 0.0,
+        ]
+        self.collision_pub.publish(ci)
+
         if self.state == State.INIT:
             self._init()
         elif self.state == State.HOVER_INIT:
             self._hover_init()
         elif self.state == State.TRACKING:
-            self._tracking()
+            if self._check_collision():
+                self.state = State.LANDING
+                self._land_cmd_time = 0.0
+            else:
+                self._tracking()
+        elif self.state == State.LANDING:
+            self._landing()
+        elif self.state == State.DISARMED:
+            pass  # 종료 상태: 아무 setpoint도 발행하지 않음
 
     # ── State handlers ──
     def _init(self):
@@ -315,6 +435,44 @@ class DroneManagerReal(Node):
                 throttle_duration_sec=2.0,
             )
 
+    def _landing(self):
+        """직충돌 후 AUTO.LAND로 현재 위치 착륙 -> 착지 확인 후 DISARM.
+
+        - OFFBOARD setpoint/heartbeat는 발행하지 않는다(ocm_cb에서 차단).
+        - AUTO.LAND 진입 명령을 착지 전까지 1초 간격으로 재송신(누락 대비).
+        - VehicleLandDetected.landed=True 면 DISARM(강제 아님) 후 종료.
+        - landed가 land_disarm_timeout 초 내에 안 오면 강제 DISARM(param2=21196)으로 종료.
+          (AUTO.LAND 진입 실패/착지 미감지로 LANDING에 무한 정체되는 것을 방지)
+        """
+        now = self.get_clock().now().nanoseconds / 1e9
+
+        # LANDING 진입 시각 기록 (강제 DISARM 타임아웃 기준점)
+        if self._land_start_time is None:
+            self._land_start_time = now
+
+        if not self.landed:
+            if now - self._land_cmd_time > 1.0:
+                # DO_SET_MODE -> AUTO.LAND : base=custom(1), main=AUTO(4), sub=LAND(6)
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 4.0, 6.0)
+                self._land_cmd_time = now
+                self.get_logger().info('AUTO.LAND 명령 송신 (착지 대기)', throttle_duration_sec=1.0)
+
+            # 폴백: landed 미수신이 land_disarm_timeout 초 지속되면 강제 DISARM
+            if self.land_disarm_timeout > 0.0 and \
+                    now - self._land_start_time >= self.land_disarm_timeout:
+                # param1=0: disarm, param2=21196: force(강제) 플래그 -> 공중이어도 disarm
+                self._pub_cmd(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0, 21196.0)
+                self.get_logger().warn(
+                    f'landed 미수신 {self.land_disarm_timeout:.1f}s 경과 -> 강제 DISARM, 임무 종료'
+                )
+                self.state = State.DISARMED
+            return
+
+        # 착지 완료 -> DISARM (param1=0: disarm, 강제 플래그 미사용)
+        self._pub_cmd(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
+        self.get_logger().warn('착지 확인 -> DISARM 송신, 임무 종료')
+        self.state = State.DISARMED
+
     # ── PX4 command helpers ──
     def _pub_pos(self, pos, yaw=0.0):
         msg = TrajectorySetpoint()
@@ -335,9 +493,9 @@ class DroneManagerReal(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.traj_pub.publish(msg)
 
-    def _pub_cmd(self, cmd, p1=0.0, p2=0.0):
+    def _pub_cmd(self, cmd, p1=0.0, p2=0.0, p3=0.0):
         msg = VehicleCommand()
-        msg.param1, msg.param2, msg.command = p1, p2, cmd
+        msg.param1, msg.param2, msg.param3, msg.command = p1, p2, p3, cmd
         msg.target_system, msg.target_component = self.system_id, 1
         msg.source_system, msg.source_component, msg.from_external = 1, 1, True
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)

@@ -65,6 +65,12 @@ def launch_setup(context, *args, **kwargs):
     # Drone manager
     hover_init_duration = float(LaunchConfiguration('hover_init_duration').perform(context))
 
+    # Collision-triggered landing
+    collision_area_frac = float(LaunchConfiguration('collision_area_frac').perform(context))
+    collision_lost_time = float(LaunchConfiguration('collision_lost_time').perform(context))
+    collision_min_edges = int(LaunchConfiguration('collision_min_edges').perform(context))
+    land_disarm_timeout = float(LaunchConfiguration('land_disarm_timeout').perform(context))
+
     # ── 1. YOLO Detector ──
     balloon_detector_node = Node(
         package='balloon_hunter',
@@ -123,6 +129,14 @@ def launch_setup(context, *args, **kwargs):
             'system_id': system_id,
             'hover_init_duration': hover_init_duration,
             'max_speed': v_max,
+            # 직충돌 감지 -> 자동 착륙/DISARM
+            'collision_area_frac': collision_area_frac,
+            'collision_lost_time': collision_lost_time,
+            'collision_min_edges': collision_min_edges,
+            'image_width': 1280,
+            'image_height': 720,
+            'enable_collision_land': True,
+            'land_disarm_timeout': land_disarm_timeout,
         }],
     )
 
@@ -172,7 +186,8 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # ── 8. Rosbag Record (이미지 제외, 제어/상태 토픽만) ──
-    bag_dir = '/home/suvlab/suicidedrone_log'
+    # 홈 디렉토리 기준 -> 사용자/머신 바뀌어도 동작 (BAG_DIR 환경변수로 덮어쓰기 가능)
+    bag_dir = os.environ.get('BAG_DIR', os.path.expanduser('~/suicidedrone_log'))
     os.makedirs(bag_dir, exist_ok=True)
     bag_name = f'rosbag_{datetime.now().strftime("%Y%m%d_%H%M%S")}_drone{system_id}'
     rosbag_record = ExecuteProcess(
@@ -185,6 +200,8 @@ def launch_setup(context, *args, **kwargs):
             '/ibvs/output',
             '/png/guidance_cmd',
             '/mission_state',
+            '/collision_info',        # [last_frac, peak_frac, peak_edges, lost_time, latched]
+            'inference_result_2',
             # PX4 출력
             f'drone{system_id}/fmu/out/monitoring',
             f'drone{system_id}/fmu/out/vehicle_local_position',
@@ -192,9 +209,11 @@ def launch_setup(context, *args, **kwargs):
             f'drone{system_id}/fmu/out/vehicle_attitude',
             f'drone{system_id}/fmu/out/vehicle_status_v1',
             f'drone{system_id}/fmu/out/vehicle_acceleration',
+            f'drone{system_id}/fmu/out/vehicle_land_detected',  # 착지 확인 (DISARM 트리거)
             # PX4 입력
             f'drone{system_id}/fmu/in/trajectory_setpoint',
             f'drone{system_id}/fmu/in/offboard_control_mode',
+            f'drone{system_id}/fmu/in/vehicle_command',         # OFFBOARD/LAND/DISARM 명령 기록
         ],
         output='screen',
     )
@@ -263,6 +282,16 @@ def generate_launch_description():
         # ── Drone Manager ──
         DeclareLaunchArgument('hover_init_duration', default_value='5.0',
                               description='Hover time for filter initialization [s]'),
+
+        # ── Collision-triggered Landing ──
+        DeclareLaunchArgument('collision_area_frac', default_value='0.10',
+                              description='bbox 면적비율(화면 대비) 임계. 너무 늦게 착륙하면 낮추고, 너무 일찍이면 높임'),
+        DeclareLaunchArgument('collision_lost_time', default_value='1.0',
+                              description='임계 초과 후 미검출 지속시간[s]. 오검출(조기착륙) 잦으면 키움'),
+        DeclareLaunchArgument('collision_min_edges', default_value='0',
+                              description='peak 프레임 경계접촉 변 수 하한(0=미사용, 1~2=더 엄격)'),
+        DeclareLaunchArgument('land_disarm_timeout', default_value='5.0',
+                              description='AUTO.LAND 후 landed 미수신 시 강제 DISARM까지 시간[s] (<=0=비활성)'),
 
         # ── Filter ──
         DeclareLaunchArgument('filter_type', default_value='DKF',

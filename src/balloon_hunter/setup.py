@@ -31,6 +31,7 @@ setup(
             'logger = balloon_hunter.logger:main',
             'drone_manager_real = balloon_hunter.drone_manager_real:main',
             'drone_visualizer_real = balloon_hunter.drone_visualizer_real:main',
+            'bbox_monitor = balloon_hunter.bbox_monitor:main',
         ],
     },
 )
