@@ -69,7 +69,7 @@ def launch_setup(context, *args, **kwargs):
             'rate': '50.0',
 
             # ── Drone Manager ──
-            'hover_init_duration': '4.0',
+            'hover_init_duration': '5.0',
 
             # ── Filter ──
             'filter_type': 'DKF',

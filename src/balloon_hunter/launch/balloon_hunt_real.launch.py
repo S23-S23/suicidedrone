@@ -190,7 +190,7 @@ def launch_setup(context, *args, **kwargs):
             f'drone{system_id}/fmu/out/vehicle_local_position',
             f'drone{system_id}/fmu/out/vehicle_angular_velocity',
             f'drone{system_id}/fmu/out/vehicle_attitude',
-            f'drone{system_id}/fmu/out/vehicle_status',
+            f'drone{system_id}/fmu/out/vehicle_status_v1',
             f'drone{system_id}/fmu/out/vehicle_acceleration',
             # PX4 입력
             f'drone{system_id}/fmu/in/trajectory_setpoint',
@@ -261,7 +261,7 @@ def generate_launch_description():
                               description='Guidance loop rate [Hz]'),
 
         # ── Drone Manager ──
-        DeclareLaunchArgument('hover_init_duration', default_value='4.0',
+        DeclareLaunchArgument('hover_init_duration', default_value='5.0',
                               description='Hover time for filter initialization [s]'),
 
         # ── Filter ──

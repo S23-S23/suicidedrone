@@ -44,7 +44,7 @@ from px4_msgs.msg import (
     Monitoring,
 )
 from std_msgs.msg import String, UInt32
-from suicide_drone_msgs.msg import GuidanceCmd
+from suicide_drone_msgs.msg import GuidanceCmd, TargetInfo
 from enum import Enum
 
 
@@ -60,7 +60,7 @@ class DroneManagerReal(Node):
 
         # ── Parameters ──
         self.declare_parameter('system_id', 1)
-        self.declare_parameter('hover_init_duration', 2.0)  # seconds to hover for filter init
+        self.declare_parameter('hover_init_duration', 5.0)  # seconds to hover for filter init
         self.declare_parameter('max_speed', 10.0)
 
         self.system_id          = self.get_parameter('system_id').value
@@ -79,6 +79,8 @@ class DroneManagerReal(Node):
         self.ocm_count        = 0            # offboard heartbeat count
         self.pos_received     = False        # have we received at least one position?
         self.trigger_msg      = False
+        self._last_target_time   = None      # last /target_info reception time
+        self.target_seen_timeout = 0.5       # s: treat target as detected if seen within this window
 
         # Position to hold during INIT/HOVER_INIT
         self.hold_pos         = np.zeros(3)
@@ -135,6 +137,13 @@ class DroneManagerReal(Node):
             self.trigger_callback,
             10
         )
+        # Raw YOLO detection — used to gate INIT->HOVER_INIT (avoids guidance_cmd deadlock)
+        self.create_subscription(
+            TargetInfo,
+            '/target_info',
+            self.target_info_cb,
+            10,
+        )
 
         # ── Timers ──
         self.create_timer(0.1,  self.ocm_cb)      # 10 Hz offboard heartbeat
@@ -165,13 +174,33 @@ class DroneManagerReal(Node):
 
     def trigger_callback(self, msg):
         if msg.data == self.system_id:
-            self.get_logger().info(f"drone{self.system_id} received tracking trigger.")
+            if not self.trigger_msg:
+                self.get_logger().info(f"drone{self.system_id} received tracking trigger.")
+                # Capture current position at handoff so we hold where we are NOW,
+                # not the stale position captured when the node launched.
+                if self.pos_received:
+                    self.hold_pos = self.drone_pos.copy()
+                    self.hold_yaw = self.drone_yaw
             self.trigger_msg = True
         else:
             self.trigger_msg = False
 
+    def target_info_cb(self, msg: TargetInfo):
+        self._last_target_time = self.get_clock().now()
+
+    def _target_recent(self):
+        """True if a YOLO detection arrived within target_seen_timeout."""
+        if self._last_target_time is None:
+            return False
+        dt = (self.get_clock().now() - self._last_target_time).nanoseconds / 1e9
+        return dt < self.target_seen_timeout
+
     # ── Offboard heartbeat (10Hz) ──
     def ocm_cb(self):
+        # Stay silent until triggered: before handoff, follower_drone owns the
+        # OCM stream. Publishing here too would mix two OCM sources on PX4.
+        if not self.trigger_msg:
+            return
         msg = OffboardControlMode()
         if self.state == State.TRACKING and self.guidance_cmd is not None \
                 and self.guidance_cmd.target_detected:
@@ -200,13 +229,20 @@ class DroneManagerReal(Node):
 
     # ── State handlers ──
     def _init(self):
-        """Wait for position data, send position hold, request OFFBOARD."""
+        """Hold handoff position, request OFFBOARD, then transition to HOVER_INIT
+        once triggered AND the balloon is detected (/target_info).
+
+        Gate on the raw detection (/target_info), NOT on guidance_cmd: the
+        guidance pipeline only runs once mission_state is HOVER_INIT/TRACKING,
+        so depending on guidance_cmd here would deadlock.
+        """
         if not self.pos_received:
             return
-        if self.guidance_cmd is None:
+        # Before trigger: follower_drone is in full control. Stay silent.
+        if not self.trigger_msg:
             return
 
-        # Always publish position hold at captured position
+        # Triggered: balloon_hunter has taken over. Hold the handoff position.
         self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
 
         now = self.get_clock().now().nanoseconds / 1e9
@@ -215,7 +251,7 @@ class DroneManagerReal(Node):
         if self.ocm_count < 20:
             return
 
-        # Request OFFBOARD mode
+        # Request OFFBOARD mode (usually already active from the follower handoff)
         if self.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             if now - self.last_cmd_time > 1.0:
                 self._pub_cmd(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
@@ -223,18 +259,16 @@ class DroneManagerReal(Node):
                 self.last_cmd_time = now
             return
 
-        if self.guidance_cmd.target_detected:
-            self.get_logger().info("타겟 검출.", once=True)
-            if self.trigger_msg:
-                self.get_logger().info("트리거 수신.", once=True)
-            else:
-                self.get_logger().info("트리거 미수신.", once=True)
-                return
-        else:
+        # Wait until the balloon is actually in view before committing to attack.
+        if not self._target_recent():
+            self.get_logger().info('트리거 수신, 타겟 대기 중...', throttle_duration_sec=1.0)
             return
 
-        # OFFBOARD mode active -> transition to HOVER_INIT
-        self.get_logger().info('OFFBOARD active -> HOVER_INIT')
+        # OFFBOARD active + target detected -> transition to HOVER_INIT.
+        # Re-capture current position so HOVER_INIT holds where we are NOW.
+        self.get_logger().info('타겟 검출 + 트리거 수신 -> HOVER_INIT', once=True)
+        self.hold_pos = self.drone_pos.copy()
+        self.hold_yaw = self.drone_yaw
         self._hover_start_t = time.time()
         self.trigger_pub.publish(UInt32(data=self.system_id))
         self.state = State.HOVER_INIT
@@ -244,7 +278,7 @@ class DroneManagerReal(Node):
         self._pub_pos(self.hold_pos.tolist(), yaw=self.hold_yaw)
 
         elapsed = time.time() - self._hover_start_t
-        if elapsed >= self.hover_init_dur*self.system_id:
+        if elapsed >= self.hover_init_dur:
             self.get_logger().info(
                 f'Filter init complete ({self.hover_init_dur}s) -> TRACKING'
             )
